@@ -1,0 +1,53 @@
+STAGE 3 of 5: Widget extension UI, NON-INTERACTIVE for now. Only create
+files in Sources/Widget/. Read Sources/Shared/.
+
+Create:
+
+1. StickToItWidgetBundle.swift — @main WidgetBundle containing StickToItWidget.
+
+2. StickToItWidget.swift — Widget struct:
+     - kind: "StickToItWidget"
+     - configurationDisplayName: "Stick to it"
+     - description: "Your post-it todos at a glance."
+     - supportedFamilies: [.systemMedium, .systemLarge]
+     - Uses StickToItProvider for the timeline
+     - Body uses StickToItWidgetView
+
+3. StickToItProvider.swift — TimelineProvider:
+     - placeholder: returns an Entry with 4 sample todos
+     - getSnapshot: returns current todos (up to 12)
+     - getTimeline: returns a single Entry now, with policy
+       .after(Date().addingTimeInterval(60 * 15))   // 15 minutes
+     - Reads via TodoStore.load(). Filters out isComplete == true.
+
+4. StickToItEntry.swift — TimelineEntry struct: date, todos: [TodoItem].
+
+5. StickToItWidgetView.swift — the visible widget:
+     - @Environment(\.widgetFamily) var family
+     - Background: Color(hex: "#F5F1E8") in .containerBackground(for: .widget)
+       (iOS 17 required pattern — do NOT use ZStack background fill)
+     - GeometryReader to get widget size
+     - Display up to maxCount todos:
+         * .systemMedium → maxCount = 6, postItSize = 56pt, font 9pt, 3-line limit
+         * .systemLarge  → maxCount = 12, postItSize = 64pt, font 9pt, 3-line limit
+     - Same post-it styling as Stage 2 (same colors, same rotation, same
+       shadow, just smaller)
+     - Position via .position(x:y:) using normalized positionX/Y * widgetSize
+
+WIDGETKIT GOTCHAS — handle correctly:
+- iOS 17 requires .containerBackground(for: .widget) for the widget's
+  background, not a ZStack with a fill.
+- Widget views render in a sandboxed extension process. They cannot directly
+  call WidgetCenter — only the host app does that.
+- Use @Environment(\.widgetFamily) to switch sizing.
+- Use .position(x:y:) for absolute placement, NOT .offset, because rotation
+  composes more cleanly with .position.
+
+ACCEPTANCE CRITERIA:
+- After adding todos in the app, the widget preview in Xcode (and on device)
+  shows the same post-its at the same relative positions.
+- Adding a 13th todo on .systemLarge or 7th on .systemMedium does not crash;
+  excess are simply not rendered (we'll handle this in Stage 5).
+- Empty state (no todos) shows just the cream background.
+
+STOP after Stage 3. Do NOT add tap interaction yet.
