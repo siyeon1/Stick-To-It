@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import NotFound from "@/pages/not-found";
 import { usePostItStore, PostIt } from "@/hooks/use-postit-store";
+import { SketchBorder, SketchDefs } from "@/components/sketch-border";
 import {
   DndContext,
   useDraggable,
   useDroppable,
   DragEndEvent,
+  DragStartEvent,
   PointerSensor,
   TouchSensor,
   useSensor,
@@ -20,10 +22,15 @@ import { Info, Search, X, Move } from "lucide-react";
 
 const queryClient = new QueryClient();
 
-const COLORS = ["#D4A5A5", "#B8C9A8", "#A8B5C9", "#E0CC9E", "#C9A48F"];
+// Granola-friendly post-it palette: warm naturals that sit harmoniously
+// next to the olive-green accent without competing with it.
+const COLORS = ["#E8D9B4", "#D9E2B8", "#E9C9B7", "#C8D7CD", "#EBD7C5"];
 const NOTE_SIZE = 192;
 const PAD_INSET = 32;
 const NUDGE_PX = 16;
+
+const GRANOLA_GREEN = "#5B6F00";
+const INK = "#0E0F0C";
 
 function generatePostIt(x: number, y: number, text = ""): PostIt {
   return {
@@ -49,6 +56,7 @@ type DraggablePostItProps = {
   isPicked: boolean;
   isSearchMatch: boolean;
   isFaded: boolean;
+  isFreshlyCreated: boolean;
 };
 
 function DraggablePostIt({
@@ -63,6 +71,7 @@ function DraggablePostIt({
   isPicked,
   isSearchMatch,
   isFaded,
+  isFreshlyCreated,
 }: DraggablePostItProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -109,9 +118,8 @@ function DraggablePostIt({
         w-48 h-48 shadow-sm flex flex-col p-4 cursor-grab active:cursor-grabbing touch-none
         transition-opacity duration-300
         ${isFaded ? "opacity-30" : "opacity-100"}
-        ${isSearchMatch ? "ring-2 ring-white ring-offset-2 ring-offset-black/10 animate-pulse" : ""}
+        ${isSearchMatch ? "ring-2 ring-primary/70 ring-offset-2 ring-offset-black/10 animate-pulse" : ""}
         ${isFocused ? "outline outline-2 outline-offset-2 outline-foreground/40" : ""}
-        ${isPicked ? "ring-4 ring-foreground/50 shadow-2xl" : ""}
       `}
       animate={
         isDragging || isPicked
@@ -182,7 +190,18 @@ function DraggablePostIt({
         onOpenEditor();
       }}
     >
-      <div className="w-full h-full text-foreground/80 font-medium whitespace-pre-wrap overflow-hidden text-ellipsis text-lg leading-snug">
+      {/* Pencil-sketched border. On a freshly-created post-it the stroke
+          draws itself in; on settled notes (and the picked/selected state)
+          it stays as a static rough outline. */}
+      <SketchBorder
+        color={isPicked ? GRANOLA_GREEN : INK}
+        strokeWidth={isPicked ? 2.4 : 1.4}
+        radius={2}
+        inset={2}
+        staticOnly={!isFreshlyCreated}
+        animationKey={isFreshlyCreated ? postIt.id : undefined}
+      />
+      <div className="w-full h-full text-foreground/80 font-medium whitespace-pre-wrap overflow-hidden text-ellipsis text-lg leading-snug relative z-10">
         {postIt.text}
       </div>
       <button
@@ -197,7 +216,7 @@ function DraggablePostIt({
           e.stopPropagation();
           cancelLongPress();
         }}
-        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/5 hover:bg-black/15 flex items-center justify-center text-foreground/40 hover:text-foreground/70 transition-colors"
+        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/5 hover:bg-black/15 flex items-center justify-center text-foreground/40 hover:text-foreground/70 transition-colors z-20"
       >
         <Move size={14} />
       </button>
@@ -208,13 +227,28 @@ function DraggablePostIt({
 function DoneZone({
   count,
   isPickActive,
+  isDraggingPostIt,
   onPickDrop,
 }: {
   count: number;
   isPickActive: boolean;
+  isDraggingPostIt: boolean;
   onPickDrop: () => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: "done-zone" });
+
+  // Re-trigger the pencil draw-in when the zone becomes "active" — i.e.
+  // when a post-it is being dragged or picked up — so the outline feels
+  // like it's being sketched fresh as the user approaches it.
+  const activeKey = isOver
+    ? "over"
+    : isPickActive
+      ? "pick"
+      : isDraggingPostIt
+        ? "drag"
+        : "idle";
+
+  const showHover = isOver || isPickActive;
 
   return (
     <div
@@ -226,17 +260,34 @@ function DoneZone({
         }
       }}
       className={`
-        absolute bottom-8 right-8 w-56 h-56 rounded-2xl border-2 border-dashed
+        absolute bottom-8 right-8 w-56 h-56 rounded-2xl
         transition-colors duration-200 flex flex-col items-center justify-center
         ${isPickActive ? "pointer-events-auto cursor-pointer" : "pointer-events-none"}
-        ${isOver || isPickActive ? "border-foreground/30 bg-black/5" : "border-foreground/10 bg-transparent"}
+        ${showHover ? "bg-primary/8" : "bg-transparent"}
       `}
+      style={{
+        backgroundColor: showHover ? "rgba(91, 111, 0, 0.08)" : undefined,
+      }}
     >
-      <span className="text-foreground/30 font-medium text-lg tracking-wide uppercase">
+      <SketchBorder
+        color={showHover ? GRANOLA_GREEN : "rgba(14, 15, 12, 0.35)"}
+        strokeWidth={showHover ? 2 : 1.5}
+        radius={18}
+        inset={4}
+        dashed
+        animationKey={activeKey}
+      />
+      <span
+        className={`font-semibold text-lg tracking-wide uppercase relative z-10 transition-colors ${
+          showHover ? "text-primary" : "text-foreground/40"
+        }`}
+      >
         {isPickActive ? "Tap to retire" : "Done"}
       </span>
       {count > 0 && !isPickActive && (
-        <span className="text-foreground/20 text-sm mt-1">{count} items</span>
+        <span className="text-foreground/30 text-sm mt-1 relative z-10">
+          {count} items
+        </span>
       )}
     </div>
   );
@@ -249,7 +300,9 @@ function Pad({ onClick }: { onClick: () => void }) {
       data: { type: "pad" },
     });
 
-  const dragStyle = transform ? { transform: CSS.Translate.toString(transform) } : {};
+  const dragStyle = transform
+    ? { transform: CSS.Translate.toString(transform) }
+    : {};
 
   return (
     <div
@@ -266,10 +319,10 @@ function Pad({ onClick }: { onClick: () => void }) {
       {...attributes}
       aria-label="New sticky note pad. Click or drag to create a new note. Press N for shortcut."
     >
-      <div className="absolute inset-0 bg-[#E0CC9E] rotate-[-4deg] shadow-sm" />
-      <div className="absolute inset-0 bg-[#B8C9A8] rotate-[-2deg] shadow-sm" />
-      <div className="absolute inset-0 bg-[#D4A5A5] rotate-[2deg] shadow-sm flex items-center justify-center group">
-        <span className="text-black/20 text-4xl group-hover:text-black/30 transition-colors">
+      <div className="absolute inset-0 bg-[#E9C9B7] rotate-[-4deg] shadow-sm" />
+      <div className="absolute inset-0 bg-[#D9E2B8] rotate-[-2deg] shadow-sm" />
+      <div className="absolute inset-0 bg-[#E8D9B4] rotate-[2deg] shadow-sm flex items-center justify-center group">
+        <span className="text-foreground/25 text-4xl group-hover:text-foreground/40 transition-colors">
           +
         </span>
       </div>
@@ -298,10 +351,11 @@ function DraggableDoneCard({ postIt }: { postIt: PostIt }) {
       {...listeners}
       {...attributes}
     >
-      <div className="flex-1 text-foreground/80 font-medium text-xl overflow-hidden text-ellipsis whitespace-pre-wrap pointer-events-none">
+      <SketchBorder color={INK} strokeWidth={1.5} radius={2} inset={2} staticOnly />
+      <div className="flex-1 text-foreground/80 font-medium text-xl overflow-hidden text-ellipsis whitespace-pre-wrap pointer-events-none relative z-10">
         {postIt.text}
       </div>
-      <div className="text-foreground/40 text-xs font-medium pt-2 pointer-events-none">
+      <div className="text-foreground/40 text-xs font-medium pt-2 pointer-events-none relative z-10">
         Drag onto the wall to bring it back
       </div>
     </motion.div>
@@ -314,10 +368,21 @@ function RestoreZone({ visible }: { visible: boolean }) {
   return (
     <div
       ref={setNodeRef}
-      className={`absolute inset-x-8 top-24 bottom-32 rounded-2xl border-2 border-dashed pointer-events-none transition-colors flex items-center justify-center
-        ${isOver ? "border-foreground/40 bg-black/5" : "border-foreground/15"}`}
+      className="absolute inset-x-8 top-24 bottom-32 rounded-2xl pointer-events-none transition-colors flex items-center justify-center"
     >
-      <span className="text-foreground/30 font-medium text-lg tracking-wide uppercase">
+      <SketchBorder
+        color={isOver ? GRANOLA_GREEN : "rgba(14, 15, 12, 0.25)"}
+        strokeWidth={isOver ? 2 : 1.5}
+        radius={18}
+        inset={4}
+        dashed
+        animationKey={isOver ? "over" : "idle"}
+      />
+      <span
+        className={`font-semibold text-lg tracking-wide uppercase relative z-10 transition-colors ${
+          isOver ? "text-primary" : "text-foreground/40"
+        }`}
+      >
         Drop on the wall
       </span>
     </div>
@@ -346,11 +411,33 @@ function StickyWall() {
   const [isDonePileOpen, setIsDonePileOpen] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [pickedId, setPickedId] = useState<string | null>(null);
+  // Tracks post-its created within the last ~1.2s so their pencil border
+  // animates in. Cleared via timeout once the draw-in finishes.
+  const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 8 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 120, tolerance: 8 },
+    }),
   );
+
+  const markFresh = useCallback((id: string) => {
+    setFreshIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    window.setTimeout(() => {
+      setFreshIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }, 1200);
+  }, []);
 
   const createAt = useCallback(
     (x: number, y: number) => {
@@ -362,17 +449,35 @@ function StickyWall() {
       }
       const newPostIt = generatePostIt(x, y);
       addPostIt(newPostIt);
+      markFresh(newPostIt.id);
       setEditingPostIt(newPostIt);
     },
-    [addPostIt],
+    [addPostIt, markFresh],
   );
 
   const handleCreateNew = useCallback(() => {
-    createAt(window.innerWidth / 2 - NOTE_SIZE / 2, window.innerHeight / 2 - NOTE_SIZE / 2);
+    createAt(
+      window.innerWidth / 2 - NOTE_SIZE / 2,
+      window.innerHeight / 2 - NOTE_SIZE / 2,
+    );
   }, [createAt]);
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const data = event.active.data.current as
+      | { type: "postit"; postIt: PostIt }
+      | { type: "pad" }
+      | { type: "done-card"; postIt: PostIt }
+      | undefined;
+    if (data?.type === "postit") {
+      setActiveDragId(data.postIt.id);
+    } else {
+      setActiveDragId(null);
+    }
+  };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, delta, over } = event;
+    setActiveDragId(null);
     const data = active.data.current as
       | { type: "postit"; postIt: PostIt }
       | { type: "pad" }
@@ -475,10 +580,15 @@ function StickyWall() {
       className="fixed inset-0 w-full h-full bg-background overflow-hidden select-none"
       onClick={handleWallClickForPick}
     >
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <SketchDefs />
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
         {state.wall.length === 0 && state.done.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <p className="text-foreground/30 text-xl font-medium tracking-wide">
+            <p className="text-foreground/40 text-xl font-medium tracking-wide">
               Pull a note to start thinking...
             </p>
           </div>
@@ -488,6 +598,7 @@ function StickyWall() {
         <DoneZone
           count={state.done.length}
           isPickActive={!!pickedId}
+          isDraggingPostIt={!!activeDragId}
           onPickDrop={() => {
             if (!pickedId) return;
             retirePostIt(pickedId);
@@ -498,7 +609,8 @@ function StickyWall() {
 
         {state.wall.map((postIt) => {
           const isMatch =
-            searchQuery && postIt.text.toLowerCase().includes(searchQuery.toLowerCase());
+            searchQuery &&
+            postIt.text.toLowerCase().includes(searchQuery.toLowerCase());
           const isFaded = isSearchOpen && searchQuery.length > 0 && !isMatch;
           return (
             <DraggablePostIt
@@ -513,9 +625,10 @@ function StickyWall() {
               }}
               onPickRequested={() => {
                 setPickedId(postIt.id);
-                toast("Picked up. Tap the wall to place, or the done area to retire.", {
-                  position: "top-center",
-                });
+                toast(
+                  "Picked up. Tap the wall to place, or the done area to retire.",
+                  { position: "top-center" },
+                );
               }}
               onRetireFromKeyboard={() => {
                 retirePostIt(postIt.id);
@@ -523,16 +636,24 @@ function StickyWall() {
                 toast("Sent to the done pile", { position: "bottom-center" });
               }}
               onNudge={(dx, dy) => {
-                const fresh = stateRef.current.wall.find((p) => p.id === postIt.id);
+                const fresh = stateRef.current.wall.find(
+                  (p) => p.id === postIt.id,
+                );
                 if (!fresh) return;
-                updatePostIt(postIt.id, { x: fresh.x + dx, y: fresh.y + dy });
+                updatePostIt(postIt.id, {
+                  x: fresh.x + dx,
+                  y: fresh.y + dy,
+                });
               }}
               onFocusNote={() => setFocusedId(postIt.id)}
-              onBlurNote={() => setFocusedId((cur) => (cur === postIt.id ? null : cur))}
+              onBlurNote={() =>
+                setFocusedId((cur) => (cur === postIt.id ? null : cur))
+              }
               isFocused={focusedId === postIt.id}
               isPicked={pickedId === postIt.id}
               isSearchMatch={!!isMatch}
               isFaded={!!isFaded}
+              isFreshlyCreated={freshIds.has(postIt.id)}
             />
           );
         })}
@@ -546,11 +667,13 @@ function StickyWall() {
               className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-md"
             >
               <div className="p-8 flex justify-between items-center">
-                <h2 className="text-3xl font-bold text-foreground">The Done Pile</h2>
+                <h2 className="text-3xl font-bold text-foreground">
+                  The Done Pile
+                </h2>
                 <button
                   onClick={() => setIsDonePileOpen(false)}
                   aria-label="Close done pile"
-                  className="w-12 h-12 bg-white/50 rounded-full flex items-center justify-center hover:bg-white transition-colors"
+                  className="w-12 h-12 bg-white/80 rounded-full flex items-center justify-center hover:bg-white transition-colors shadow-sm"
                 >
                   <X size={24} />
                 </button>
@@ -576,13 +699,13 @@ function StickyWall() {
                               window.innerHeight / 2 - NOTE_SIZE / 2,
                             );
                           }}
-                          className="bg-white/70 backdrop-blur-sm px-3 py-1.5 rounded-full text-xs font-bold hover:bg-white text-foreground transition-colors"
+                          className="bg-secondary text-secondary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-secondary/80 transition-colors"
                         >
                           Un-retire
                         </button>
                         <button
                           onClick={() => deleteDonePostIt(postIt.id)}
-                          className="bg-destructive/10 text-destructive backdrop-blur-sm px-3 py-1.5 rounded-full text-xs font-bold hover:bg-destructive/20 transition-colors"
+                          className="bg-destructive/10 text-destructive px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-destructive/20 transition-colors"
                         >
                           Delete
                         </button>
@@ -626,7 +749,7 @@ function StickyWall() {
             </div>
           ))}
           <div className="absolute inset-0 z-10 flex items-center justify-center opacity-0 hover:opacity-100 bg-black/5 transition-opacity">
-            <span className="bg-background/80 text-foreground px-3 py-1 rounded-full text-sm font-medium backdrop-blur-sm shadow-sm">
+            <span className="bg-white/90 text-foreground px-4 py-1 rounded-full text-sm font-semibold backdrop-blur-sm shadow-sm">
               Open Pile
             </span>
           </div>
@@ -634,25 +757,26 @@ function StickyWall() {
       )}
 
       {pickedId && (
-        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-40 bg-foreground text-background px-4 py-2 rounded-full shadow-lg text-sm font-medium pointer-events-none">
-          Tap the wall to place, the done area to retire, or press Esc to cancel.
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-40 bg-primary text-primary-foreground px-5 py-2 rounded-full shadow-lg text-sm font-semibold pointer-events-none">
+          Tap the wall to place, the done area to retire, or press Esc to
+          cancel.
         </div>
       )}
 
-      <div className="absolute top-8 right-8 flex gap-4 z-40">
+      <div className="absolute top-8 right-8 flex gap-3 z-40">
         <button
           onClick={() => setIsSearchOpen(!isSearchOpen)}
           aria-label="Search notes"
-          className="w-12 h-12 bg-background/50 backdrop-blur-md rounded-full flex items-center justify-center text-foreground/50 hover:text-foreground/80 transition-colors shadow-sm hover:shadow"
+          className="h-11 w-11 bg-white rounded-full flex items-center justify-center text-foreground/60 hover:text-primary hover:bg-secondary transition-colors border border-border"
         >
-          <Search size={20} />
+          <Search size={18} />
         </button>
         <button
           onClick={() => setIsAboutOpen(true)}
           aria-label="About this wall"
-          className="w-12 h-12 bg-background/50 backdrop-blur-md rounded-full flex items-center justify-center text-foreground/50 hover:text-foreground/80 transition-colors shadow-sm hover:shadow"
+          className="h-11 w-11 bg-white rounded-full flex items-center justify-center text-foreground/60 hover:text-primary hover:bg-secondary transition-colors border border-border"
         >
-          <Info size={20} />
+          <Info size={18} />
         </button>
       </div>
 
@@ -662,7 +786,7 @@ function StickyWall() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-24 right-8 z-40 bg-white/80 backdrop-blur-xl p-2 rounded-2xl shadow-xl border border-border/50 w-72"
+            className="absolute top-24 right-8 z-40 bg-white p-2 rounded-2xl shadow-xl border border-border w-72"
           >
             <input
               autoFocus
@@ -670,7 +794,7 @@ function StickyWall() {
               placeholder="Find a thought..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-transparent border-none outline-none text-foreground px-4 py-2 text-lg placeholder:text-foreground/30 font-medium"
+              className="w-full bg-transparent border-none outline-none text-foreground px-4 py-2 text-base placeholder:text-muted-foreground font-medium"
             />
           </motion.div>
         )}
@@ -700,9 +824,16 @@ function StickyWall() {
               style={{ backgroundColor: editingPostIt.color }}
               onClick={(e) => e.stopPropagation()}
             >
+              <SketchBorder
+                color={INK}
+                strokeWidth={1.6}
+                radius={2}
+                inset={3}
+                staticOnly
+              />
               <textarea
                 autoFocus
-                className="w-full h-full bg-transparent border-none outline-none resize-none text-foreground/90 font-medium text-2xl leading-relaxed placeholder:text-foreground/30"
+                className="w-full h-full bg-transparent border-none outline-none resize-none text-foreground font-medium text-2xl leading-relaxed placeholder:text-foreground/30 relative z-10"
                 placeholder="Type something..."
                 value={editingPostIt.text}
                 maxLength={200}
@@ -712,20 +843,24 @@ function StickyWall() {
                   updatePostIt(editingPostIt.id, { text: newText });
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && !(e.metaKey || e.ctrlKey)) {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !(e.metaKey || e.ctrlKey)
+                  ) {
                     e.preventDefault();
                     setEditingPostIt(null);
                   }
                 }}
               />
-              <div className="absolute bottom-4 right-6 flex items-center gap-4 text-foreground/40 font-medium text-sm">
+              <div className="absolute bottom-4 right-6 flex items-center gap-4 text-foreground/50 font-medium text-sm z-10">
                 <span>{editingPostIt.text.length}/200</span>
                 <button
                   onClick={() => {
                     retirePostIt(editingPostIt.id);
                     setEditingPostIt(null);
                   }}
-                  className="hover:text-foreground/80 transition-colors"
+                  className="bg-primary text-primary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-primary/90 transition-colors"
                   title="Retire (Cmd+Enter)"
                 >
                   Retire
@@ -743,7 +878,7 @@ function StickyWall() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-background/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-foreground/30 backdrop-blur-sm"
               onClick={() => setIsAboutOpen(false)}
             />
             <motion.div
@@ -752,43 +887,66 @@ function StickyWall() {
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
               className="relative w-[480px] bg-white rounded-3xl shadow-2xl p-10 z-10 text-foreground"
             >
-              <h2 className="text-2xl font-bold mb-6">About this wall</h2>
-              <div className="space-y-5 text-base text-foreground/80 font-medium leading-relaxed">
-                <p>Welcome to your wall. This is a place for thoughts, not tasks.</p>
+              <h2 className="text-2xl font-semibold mb-6 tracking-tight">
+                About this wall
+              </h2>
+              <div className="space-y-5 text-base text-foreground/80 font-normal leading-relaxed">
+                <p>
+                  Welcome to your wall. This is a place for thoughts, not
+                  tasks.
+                </p>
                 <ul className="space-y-3">
                   <li>
-                    <strong>Click</strong> the pad bottom-left to spawn a note in the
-                    middle, or <strong>drag</strong> from the pad to drop one wherever
-                    you want. (Or press N.)
+                    <Kbd>Click</Kbd> the pad bottom-left to spawn a note in the
+                    middle, or <Kbd>drag</Kbd> from the pad to drop one
+                    wherever you want. (Or press <Kbd>N</Kbd>.)
                   </li>
                   <li>
-                    <strong>Drag</strong> notes anywhere. On touch, long-press a note
-                    or tap its <em>move</em> handle, then tap the wall to place it.
+                    <Kbd>Drag</Kbd> notes anywhere. On touch, long-press a note
+                    or tap its <em>move</em> handle, then tap the wall to
+                    place it.
                   </li>
                   <li>
-                    With a note Tab-focused, the <strong>arrow keys</strong> nudge
-                    it, <strong>Enter</strong> (or Backspace) retires it,{" "}
-                    <strong>E</strong> opens the editor, and <strong>M</strong>{" "}
-                    picks it up to move.
+                    With a note Tab-focused, the <Kbd>arrow keys</Kbd> nudge
+                    it, <Kbd>Enter</Kbd> (or <Kbd>Backspace</Kbd>) retires it,{" "}
+                    <Kbd>E</Kbd> opens the editor, and <Kbd>M</Kbd> picks it
+                    up to move.
                   </li>
                   <li>
-                    <strong>Retire</strong> a note by dragging it onto the bottom-right
-                    pile. Open the pile and <strong>drag a card back onto the wall</strong>{" "}
-                    to bring it back.
+                    <Kbd>Retire</Kbd> a note by dragging it onto the
+                    bottom-right pile. Open the pile and{" "}
+                    <Kbd>drag a card back onto the wall</Kbd> to bring it
+                    back.
                   </li>
                   <li>
-                    <strong>Find</strong> notes instantly with Cmd/Ctrl+F.
+                    <Kbd>Find</Kbd> notes instantly with{" "}
+                    <Kbd>Cmd</Kbd>/<Kbd>Ctrl</Kbd>+<Kbd>F</Kbd>.
                   </li>
                 </ul>
-                <p className="pt-2 text-foreground/50 text-sm">
+                <p className="pt-2 text-muted-foreground text-sm">
                   Everything stays right where you leave it.
                 </p>
               </div>
+              <button
+                onClick={() => setIsAboutOpen(false)}
+                aria-label="Close about"
+                className="absolute top-5 right-5 w-9 h-9 rounded-full flex items-center justify-center text-foreground/50 hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                <X size={18} />
+              </button>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground text-sm font-semibold align-baseline">
+      {children}
+    </span>
   );
 }
 
@@ -810,7 +968,8 @@ function App() {
       <Toaster
         position="top-center"
         toastOptions={{
-          className: "bg-background border-border text-foreground rounded-xl shadow-md",
+          className:
+            "bg-white border border-border text-foreground rounded-xl shadow-md font-sans",
         }}
       />
     </QueryClientProvider>
