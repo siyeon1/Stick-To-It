@@ -5,20 +5,8 @@ import { Toaster, toast } from "sonner";
 import NotFound from "@/pages/not-found";
 import { usePostItStore, PostIt } from "@/hooks/use-postit-store";
 import { SketchBorder, SketchDefs } from "@/components/sketch-border";
-import {
-  DndContext,
-  useDraggable,
-  useDroppable,
-  DragEndEvent,
-  DragStartEvent,
-  PointerSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
-import { motion, AnimatePresence } from "framer-motion";
-import { Info, Search, X, Move } from "lucide-react";
+import { motion, AnimatePresence, useMotionValue } from "framer-motion";
+import { Info, Search, X } from "lucide-react";
 
 const queryClient = new QueryClient();
 
@@ -28,6 +16,7 @@ const COLORS = ["#E8D9B4", "#D9E2B8", "#E9C9B7", "#C8D7CD", "#EBD7C5"];
 const NOTE_SIZE = 192;
 const PAD_INSET = 32;
 const NUDGE_PX = 16;
+const PAD_SPAWN_THRESHOLD = 24;
 
 const GRANOLA_GREEN = "#5B6F00";
 const INK = "#0E0F0C";
@@ -44,16 +33,19 @@ function generatePostIt(x: number, y: number, text = ""): PostIt {
   };
 }
 
+type Point = { x: number; y: number };
+
 type DraggablePostItProps = {
   postIt: PostIt;
   onOpenEditor: () => void;
-  onPickRequested: () => void;
   onRetireFromKeyboard: () => void;
   onNudge: (dx: number, dy: number) => void;
   onFocusNote: () => void;
   onBlurNote: () => void;
+  onDragStart: () => void;
+  onDrag: (point: Point) => void;
+  onDragEnd: (offset: Point, point: Point) => void;
   isFocused: boolean;
-  isPicked: boolean;
   isSearchMatch: boolean;
   isFaded: boolean;
   isFreshlyCreated: boolean;
@@ -62,57 +54,65 @@ type DraggablePostItProps = {
 function DraggablePostIt({
   postIt,
   onOpenEditor,
-  onPickRequested,
   onRetireFromKeyboard,
   onNudge,
   onFocusNote,
   onBlurNote,
+  onDragStart,
+  onDrag,
+  onDragEnd,
   isFocused,
-  isPicked,
   isSearchMatch,
   isFaded,
   isFreshlyCreated,
 }: DraggablePostItProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: postIt.id,
-      data: { type: "postit", postIt },
-    });
+  // Drive position purely through framer-motion's motion values, seeded
+  // from the persisted state. We deliberately do NOT also set
+  // `style.left/top` from postIt.x/y — keeping two sources of truth caused
+  // a one-frame snap-back flicker on drag-release (motion values reset to
+  // 0 synchronously while the React commit to the new postIt.x lagged a
+  // paint behind). The useEffect below pulls in external position changes
+  // (keyboard nudge, restore-from-done-pile) by writing back into the
+  // motion values directly.
+  const x = useMotionValue(postIt.x);
+  const y = useMotionValue(postIt.y);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const longPressTimer = useRef<number | null>(null);
-  const longPressFired = useRef(false);
-
-  const cancelLongPress = () => {
-    if (longPressTimer.current !== null) {
-      window.clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
-  const handlePointerDown = () => {
-    longPressFired.current = false;
-    cancelLongPress();
-    longPressTimer.current = window.setTimeout(() => {
-      longPressFired.current = true;
-      onPickRequested();
-    }, 450);
-  };
-
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    left: postIt.x,
-    top: postIt.y,
-  };
+  useEffect(() => {
+    x.set(postIt.x);
+    y.set(postIt.y);
+  }, [postIt.x, postIt.y, x, y]);
 
   return (
     <motion.div
-      ref={setNodeRef}
+      drag
+      dragMomentum={false}
+      dragElastic={0}
+      onDragStart={() => {
+        setIsDragging(true);
+        onDragStart();
+      }}
+      onDrag={(_, info) => onDrag({ x: info.point.x, y: info.point.y })}
+      onDragEnd={(_, info) => {
+        setIsDragging(false);
+        const offset = { x: info.offset.x, y: info.offset.y };
+        const point = { x: info.point.x, y: info.point.y };
+        // Commit the dropped absolute position straight from the motion
+        // values — they already reflect where the note was released.
+        onDragEnd(offset, point);
+      }}
+      onTap={() => {
+        if (!isDragging) onOpenEditor();
+      }}
       style={{
-        ...style,
         position: "absolute",
-        backgroundColor: postIt.color,
+        left: 0,
+        top: 0,
+        x,
+        y,
         rotate: postIt.rotation,
-        zIndex: isDragging || isPicked ? 50 : isFocused ? 20 : 10,
+        backgroundColor: postIt.color,
+        zIndex: isDragging ? 50 : isFocused ? 20 : 10,
       }}
       className={`
         w-48 h-48 shadow-sm flex flex-col p-4 cursor-grab active:cursor-grabbing touch-none
@@ -121,28 +121,16 @@ function DraggablePostIt({
         ${isSearchMatch ? "ring-2 ring-primary/70 ring-offset-2 ring-offset-black/10 animate-pulse" : ""}
         ${isFocused ? "outline outline-2 outline-offset-2 outline-foreground/40" : ""}
       `}
-      animate={
-        isDragging || isPicked
-          ? { scale: 1.06, boxShadow: "0px 12px 24px rgba(0,0,0,0.18)" }
-          : { scale: 1, boxShadow: "0px 2px 5px rgba(0,0,0,0.05)" }
-      }
-      whileHover={{ scale: isDragging ? 1.06 : 1.02 }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={cancelLongPress}
-      onPointerUp={cancelLongPress}
-      onPointerCancel={cancelLongPress}
-      onClick={() => {
-        if (longPressFired.current) {
-          longPressFired.current = false;
-          return;
-        }
-        if (!isDragging) onOpenEditor();
+      whileDrag={{
+        scale: 1.05,
+        boxShadow: "0 12px 24px rgba(0,0,0,0.18)",
       }}
-      {...listeners}
-      {...attributes}
+      whileHover={{ scale: 1.02 }}
+      tabIndex={0}
+      role="button"
       onFocus={onFocusNote}
       onBlur={onBlurNote}
-      aria-label={`Sticky note: ${postIt.text || "Empty"}. Click or press E to edit. Arrow keys nudge, Enter or Backspace retires, M picks up.`}
+      aria-label={`Sticky note: ${postIt.text || "Empty"}. Click or press E to edit. Arrow keys nudge, Enter or Backspace retires.`}
       onKeyDown={(e) => {
         switch (e.key) {
           case "Enter":
@@ -157,12 +145,6 @@ function DraggablePostIt({
             e.preventDefault();
             e.stopPropagation();
             onOpenEditor();
-            return;
-          case "m":
-          case "M":
-            e.preventDefault();
-            e.stopPropagation();
-            onPickRequested();
             return;
           case "ArrowLeft":
             e.preventDefault();
@@ -191,11 +173,11 @@ function DraggablePostIt({
       }}
     >
       {/* Pencil-sketched border. On a freshly-created post-it the stroke
-          draws itself in; on settled notes (and the picked/selected state)
-          it stays as a static rough outline. */}
+          draws itself in; on settled notes it stays as a static rough
+          outline. */}
       <SketchBorder
-        color={isPicked ? GRANOLA_GREEN : INK}
-        strokeWidth={isPicked ? 2.4 : 1.4}
+        color={INK}
+        strokeWidth={1.4}
         radius={2}
         inset={2}
         staticOnly={!isFreshlyCreated}
@@ -204,65 +186,31 @@ function DraggablePostIt({
       <div className="w-full h-full text-foreground/80 font-medium whitespace-pre-wrap overflow-hidden text-ellipsis text-lg leading-snug relative z-10">
         {postIt.text}
       </div>
-      <button
-        type="button"
-        aria-label="Pick up to move"
-        title="Pick up to move (M)"
-        onClick={(e) => {
-          e.stopPropagation();
-          onPickRequested();
-        }}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          cancelLongPress();
-        }}
-        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/5 hover:bg-black/15 flex items-center justify-center text-foreground/40 hover:text-foreground/70 transition-colors z-20"
-      >
-        <Move size={14} />
-      </button>
     </motion.div>
   );
 }
 
 function DoneZone({
   count,
-  isPickActive,
+  isOver,
   isDraggingPostIt,
-  onPickDrop,
+  nodeRef,
 }: {
   count: number;
-  isPickActive: boolean;
+  isOver: boolean;
   isDraggingPostIt: boolean;
-  onPickDrop: () => void;
+  nodeRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const { isOver, setNodeRef } = useDroppable({ id: "done-zone" });
-
-  // Re-trigger the pencil draw-in when the zone becomes "active" — i.e.
-  // when a post-it is being dragged or picked up — so the outline feels
-  // like it's being sketched fresh as the user approaches it.
-  const activeKey = isOver
-    ? "over"
-    : isPickActive
-      ? "pick"
-      : isDraggingPostIt
-        ? "drag"
-        : "idle";
-
-  const showHover = isOver || isPickActive;
+  const activeKey = isOver ? "over" : isDraggingPostIt ? "drag" : "idle";
+  const showHover = isOver;
 
   return (
     <div
-      ref={setNodeRef}
-      onClick={(e) => {
-        if (isPickActive) {
-          e.stopPropagation();
-          onPickDrop();
-        }
-      }}
+      ref={nodeRef}
       className={`
         absolute bottom-8 right-8 w-56 h-56 rounded-2xl
         transition-colors duration-200 flex flex-col items-center justify-center
-        ${isPickActive ? "pointer-events-auto cursor-pointer" : "pointer-events-none"}
+        pointer-events-none
         ${showHover ? "bg-primary/8" : "bg-transparent"}
       `}
       style={{
@@ -282,9 +230,9 @@ function DoneZone({
           showHover ? "text-primary" : "text-foreground/40"
         }`}
       >
-        {isPickActive ? "Tap to retire" : "Done"}
+        Done
       </span>
-      {count > 0 && !isPickActive && (
+      {count > 0 && !isDraggingPostIt && (
         <span className="text-foreground/30 text-sm mt-1 relative z-10">
           {count} items
         </span>
@@ -444,30 +392,43 @@ function EmptyStateIllustration() {
   );
 }
 
-function Pad({ onClick }: { onClick: () => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: "pad-source",
-      data: { type: "pad" },
-    });
-
-  const dragStyle = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : {};
+function Pad({
+  onTap,
+  onDragEnd,
+}: {
+  onTap: () => void;
+  onDragEnd: (offset: Point) => void;
+}) {
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   return (
-    <div
-      ref={setNodeRef}
-      style={dragStyle}
-      className="absolute bottom-8 left-8 w-48 h-48 cursor-grab active:cursor-grabbing touch-none hover:-translate-y-1 transition-transform duration-200"
-      onClick={() => {
-        if (!isDragging) onClick();
+    <motion.div
+      drag
+      dragMomentum={false}
+      dragElastic={0}
+      dragSnapToOrigin
+      onDragStart={() => setIsDragging(true)}
+      onDragEnd={(_, info) => {
+        setIsDragging(false);
+        onDragEnd({ x: info.offset.x, y: info.offset.y });
       }}
+      onTap={() => {
+        if (!isDragging) onTap();
+      }}
+      whileDrag={{ scale: 1.05, boxShadow: "0 12px 24px rgba(0,0,0,0.18)" }}
+      style={{
+        x,
+        y,
+        zIndex: isDragging ? 50 : "auto",
+      }}
+      className="absolute bottom-8 left-8 w-48 h-48 cursor-grab active:cursor-grabbing touch-none"
+      tabIndex={0}
+      role="button"
       onKeyDown={(e) => {
-        if (e.key === "Enter") onClick();
+        if (e.key === "Enter") onTap();
       }}
-      {...listeners}
-      {...attributes}
       aria-label="New sticky note pad. Click or drag to create a new note. Press N for shortcut."
     >
       <div className="absolute inset-0 bg-[#E9C9B7] rotate-[-4deg] shadow-sm">
@@ -482,30 +443,42 @@ function Pad({ onClick }: { onClick: () => void }) {
           <SketchPlus size={36} color={INK} opacity={0.55} />
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
-function DraggableDoneCard({ postIt }: { postIt: PostIt }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: `done-${postIt.id}`,
-      data: { type: "done-card", postIt },
-    });
+function DraggableDoneCard({
+  postIt,
+  onDragEnd,
+}: {
+  postIt: PostIt;
+  onDragEnd: (point: Point) => void;
+}) {
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   return (
     <motion.div
-      ref={setNodeRef}
-      initial={{ opacity: 0, y: 50 }}
-      animate={{ opacity: 1, y: 0 }}
+      drag
+      dragMomentum={false}
+      dragElastic={0}
+      dragSnapToOrigin
+      onDragStart={() => setIsDragging(true)}
+      onDragEnd={(_, info) => {
+        setIsDragging(false);
+        onDragEnd({ x: info.point.x, y: info.point.y });
+      }}
+      whileDrag={{ scale: 1.05, boxShadow: "0 12px 24px rgba(0,0,0,0.18)" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       style={{
-        transform: CSS.Translate.toString(transform),
+        x,
+        y,
         backgroundColor: postIt.color,
         zIndex: isDragging ? 60 : "auto",
       }}
       className="shrink-0 snap-center w-72 h-72 shadow-lg p-6 flex flex-col relative cursor-grab active:cursor-grabbing touch-none"
-      {...listeners}
-      {...attributes}
     >
       <SketchBorder color={INK} strokeWidth={1.5} radius={2} inset={2} staticOnly />
       <div className="flex-1 text-foreground/80 font-medium text-xl overflow-hidden text-ellipsis whitespace-pre-wrap pointer-events-none relative z-10">
@@ -518,12 +491,19 @@ function DraggableDoneCard({ postIt }: { postIt: PostIt }) {
   );
 }
 
-function RestoreZone({ visible }: { visible: boolean }) {
-  const { isOver, setNodeRef } = useDroppable({ id: "wall-restore" });
+function RestoreZone({
+  visible,
+  isOver,
+  nodeRef,
+}: {
+  visible: boolean;
+  isOver: boolean;
+  nodeRef: React.RefObject<HTMLDivElement | null>;
+}) {
   if (!visible) return null;
   return (
     <div
-      ref={setNodeRef}
+      ref={nodeRef}
       className="absolute inset-x-8 top-24 bottom-32 rounded-2xl pointer-events-none transition-colors flex items-center justify-center"
     >
       <SketchBorder
@@ -542,6 +522,16 @@ function RestoreZone({ visible }: { visible: boolean }) {
         Drop on the wall
       </span>
     </div>
+  );
+}
+
+function pointInRect(point: Point, rect: DOMRect | null | undefined): boolean {
+  if (!rect) return false;
+  return (
+    point.x >= rect.left &&
+    point.x <= rect.right &&
+    point.y >= rect.top &&
+    point.y <= rect.bottom
   );
 }
 
@@ -566,18 +556,15 @@ function StickyWall() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isDonePileOpen, setIsDonePileOpen] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [pickedId, setPickedId] = useState<string | null>(null);
   // Tracks post-its created within the last ~1.2s so their pencil border
   // animates in. Cleared via timeout once the draw-in finishes.
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
-  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [isAnyPostItDragging, setIsAnyPostItDragging] = useState(false);
+  const [isOverDoneZone, setIsOverDoneZone] = useState(false);
+  const [isOverWallRestore, setIsOverWallRestore] = useState(false);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 120, tolerance: 8 },
-    }),
-  );
+  const doneZoneRef = useRef<HTMLDivElement>(null);
+  const wallRestoreRef = useRef<HTMLDivElement>(null);
 
   const markFresh = useCallback((id: string) => {
     setFreshIds((prev) => {
@@ -618,72 +605,86 @@ function StickyWall() {
     );
   }, [createAt]);
 
-  const handleDragStart = (event: DragStartEvent) => {
-    const data = event.active.data.current as
-      | { type: "postit"; postIt: PostIt }
-      | { type: "pad" }
-      | { type: "done-card"; postIt: PostIt }
-      | undefined;
-    if (data?.type === "postit") {
-      setActiveDragId(data.postIt.id);
-    } else {
-      setActiveDragId(null);
-    }
-  };
+  const handlePostItDragStart = useCallback(() => {
+    setIsAnyPostItDragging(true);
+  }, []);
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, delta, over } = event;
-    setActiveDragId(null);
-    const data = active.data.current as
-      | { type: "postit"; postIt: PostIt }
-      | { type: "pad" }
-      | { type: "done-card"; postIt: PostIt }
-      | undefined;
-    if (!data) return;
+  const handlePostItDrag = useCallback((point: Point) => {
+    setIsOverDoneZone(
+      pointInRect(point, doneZoneRef.current?.getBoundingClientRect()),
+    );
+  }, []);
 
-    if (data.type === "pad") {
+  const handlePostItDragEnd = useCallback(
+    (postIt: PostIt, offset: Point, point: Point) => {
+      setIsAnyPostItDragging(false);
+      setIsOverDoneZone(false);
+      const rect = doneZoneRef.current?.getBoundingClientRect();
+      if (pointInRect(point, rect)) {
+        retirePostIt(postIt.id);
+        setFocusedId((cur) => (cur === postIt.id ? null : cur));
+        toast("Sent to the done pile", { position: "bottom-center" });
+        return;
+      }
+      updatePostIt(postIt.id, {
+        x: postIt.x + offset.x,
+        y: postIt.y + offset.y,
+      });
+    },
+    [retirePostIt, updatePostIt],
+  );
+
+  const handlePadDragEnd = useCallback(
+    (offset: Point) => {
+      // Only spawn if the user actually dragged the pad somewhere; small
+      // micro-movements that activate the drag gesture should fall through
+      // to the onTap handler instead of producing a note on top of the pad.
+      if (
+        Math.hypot(offset.x, offset.y) < PAD_SPAWN_THRESHOLD
+      ) {
+        return;
+      }
       const padTop = window.innerHeight - PAD_INSET - NOTE_SIZE;
       const padLeft = PAD_INSET;
-      createAt(padLeft + delta.x, padTop + delta.y);
-      return;
-    }
+      createAt(padLeft + offset.x, padTop + offset.y);
+    },
+    [createAt],
+  );
 
-    if (data.type === "postit") {
-      if (over && over.id === "done-zone") {
-        retirePostIt(data.postIt.id);
-        toast("Sent to the done pile", { position: "bottom-center" });
-      } else {
-        updatePostIt(data.postIt.id, {
-          x: data.postIt.x + delta.x,
-          y: data.postIt.y + delta.y,
-        });
-      }
-      return;
-    }
-
-    if (data.type === "done-card") {
-      if (over && over.id === "wall-restore") {
+  const handleDoneCardDragEnd = useCallback(
+    (postIt: PostIt, point: Point) => {
+      const rect = wallRestoreRef.current?.getBoundingClientRect();
+      setIsOverWallRestore(false);
+      if (pointInRect(point, rect)) {
         unretirePostIt(
-          data.postIt.id,
+          postIt.id,
           window.innerWidth / 2 - NOTE_SIZE / 2,
           window.innerHeight / 2 - NOTE_SIZE / 2,
         );
         setIsDonePileOpen(false);
         toast("Back on the wall", { position: "top-center" });
       }
+    },
+    [unretirePostIt],
+  );
+
+  // Live "is over the wall-restore zone" feedback while a done-card is
+  // being dragged. We listen at window level since we don't have a
+  // droppable abstraction tracking pointer movement for us.
+  useEffect(() => {
+    if (!isDonePileOpen) {
+      setIsOverWallRestore(false);
       return;
     }
-  };
-
-  const handleWallClickForPick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!pickedId) return;
-    if (e.target !== e.currentTarget) return;
-    const x = e.clientX - NOTE_SIZE / 2;
-    const y = e.clientY - NOTE_SIZE / 2;
-    updatePostIt(pickedId, { x, y });
-    toast("Note placed", { position: "top-center" });
-    setPickedId(null);
-  };
+    const handler = (e: PointerEvent) => {
+      const rect = wallRestoreRef.current?.getBoundingClientRect();
+      setIsOverWallRestore(
+        pointInRect({ x: e.clientX, y: e.clientY }, rect),
+      );
+    };
+    window.addEventListener("pointermove", handler);
+    return () => window.removeEventListener("pointermove", handler);
+  }, [isDonePileOpen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -698,7 +699,6 @@ function StickyWall() {
         setEditingPostIt(null);
         setIsAboutOpen(false);
         setIsDonePileOpen(false);
-        setPickedId(null);
         return;
       }
 
@@ -732,162 +732,146 @@ function StickyWall() {
   ]);
 
   return (
-    <div
-      className="fixed inset-0 w-full h-full bg-background overflow-hidden select-none"
-      onClick={handleWallClickForPick}
-    >
+    <div className="fixed inset-0 w-full h-full bg-background overflow-hidden select-none">
       <SketchDefs />
-      <DndContext
-        sensors={sensors}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        {state.wall.length === 0 && state.done.length === 0 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 pointer-events-none">
-            <EmptyStateIllustration />
-            <p className="text-foreground/40 text-xl font-medium tracking-wide">
-              Pull a note to start thinking...
-            </p>
-          </div>
-        )}
 
-        <Pad onClick={handleCreateNew} />
-        <DoneZone
-          count={state.done.length}
-          isPickActive={!!pickedId}
-          isDraggingPostIt={!!activeDragId}
-          onPickDrop={() => {
-            if (!pickedId) return;
-            retirePostIt(pickedId);
-            toast("Sent to the done pile", { position: "bottom-center" });
-            setPickedId(null);
-          }}
-        />
+      {state.wall.length === 0 && state.done.length === 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 pointer-events-none">
+          <EmptyStateIllustration />
+          <p className="text-foreground/40 text-xl font-medium tracking-wide">
+            Pull a note to start thinking...
+          </p>
+        </div>
+      )}
 
-        {state.wall.map((postIt) => {
-          const isMatch =
-            searchQuery &&
-            postIt.text.toLowerCase().includes(searchQuery.toLowerCase());
-          const isFaded = isSearchOpen && searchQuery.length > 0 && !isMatch;
-          return (
-            <DraggablePostIt
-              key={postIt.id}
-              postIt={postIt}
-              onOpenEditor={() => {
-                if (pickedId === postIt.id) {
-                  setPickedId(null);
-                  return;
-                }
-                setEditingPostIt(postIt);
-              }}
-              onPickRequested={() => {
-                setPickedId(postIt.id);
-                toast(
-                  "Picked up. Tap the wall to place, or the done area to retire.",
-                  { position: "top-center" },
-                );
-              }}
-              onRetireFromKeyboard={() => {
-                retirePostIt(postIt.id);
-                setFocusedId((cur) => (cur === postIt.id ? null : cur));
-                toast("Sent to the done pile", { position: "bottom-center" });
-              }}
-              onNudge={(dx, dy) => {
-                const fresh = stateRef.current.wall.find(
-                  (p) => p.id === postIt.id,
-                );
-                if (!fresh) return;
-                updatePostIt(postIt.id, {
-                  x: fresh.x + dx,
-                  y: fresh.y + dy,
-                });
-              }}
-              onFocusNote={() => setFocusedId(postIt.id)}
-              onBlurNote={() =>
-                setFocusedId((cur) => (cur === postIt.id ? null : cur))
-              }
-              isFocused={focusedId === postIt.id}
-              isPicked={pickedId === postIt.id}
-              isSearchMatch={!!isMatch}
-              isFaded={!!isFaded}
-              isFreshlyCreated={freshIds.has(postIt.id)}
+      <Pad onTap={handleCreateNew} onDragEnd={handlePadDragEnd} />
+      <DoneZone
+        count={state.done.length}
+        isOver={isOverDoneZone}
+        isDraggingPostIt={isAnyPostItDragging}
+        nodeRef={doneZoneRef}
+      />
+
+      {state.wall.map((postIt) => {
+        const isMatch =
+          searchQuery &&
+          postIt.text.toLowerCase().includes(searchQuery.toLowerCase());
+        const isFaded = isSearchOpen && searchQuery.length > 0 && !isMatch;
+        return (
+          <DraggablePostIt
+            key={postIt.id}
+            postIt={postIt}
+            onOpenEditor={() => setEditingPostIt(postIt)}
+            onRetireFromKeyboard={() => {
+              retirePostIt(postIt.id);
+              setFocusedId((cur) => (cur === postIt.id ? null : cur));
+              toast("Sent to the done pile", { position: "bottom-center" });
+            }}
+            onNudge={(dx, dy) => {
+              const fresh = stateRef.current.wall.find(
+                (p) => p.id === postIt.id,
+              );
+              if (!fresh) return;
+              updatePostIt(postIt.id, {
+                x: fresh.x + dx,
+                y: fresh.y + dy,
+              });
+            }}
+            onFocusNote={() => setFocusedId(postIt.id)}
+            onBlurNote={() =>
+              setFocusedId((cur) => (cur === postIt.id ? null : cur))
+            }
+            onDragStart={handlePostItDragStart}
+            onDrag={handlePostItDrag}
+            onDragEnd={(offset, point) =>
+              handlePostItDragEnd(postIt, offset, point)
+            }
+            isFocused={focusedId === postIt.id}
+            isSearchMatch={!!isMatch}
+            isFaded={!!isFaded}
+            isFreshlyCreated={freshIds.has(postIt.id)}
+          />
+        );
+      })}
+
+      <AnimatePresence>
+        {isDonePileOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-md"
+          >
+            <div className="p-8 flex justify-between items-center">
+              <h2 className="text-3xl font-bold text-foreground">
+                The Done Pile
+              </h2>
+              <button
+                onClick={() => setIsDonePileOpen(false)}
+                aria-label="Close done pile"
+                className="w-12 h-12 bg-white/80 rounded-full flex items-center justify-center hover:bg-white transition-colors shadow-sm"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <RestoreZone
+              visible={state.done.length > 0}
+              isOver={isOverWallRestore}
+              nodeRef={wallRestoreRef}
             />
-          );
-        })}
 
-        <AnimatePresence>
-          {isDonePileOpen && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-md"
-            >
-              <div className="p-8 flex justify-between items-center">
-                <h2 className="text-3xl font-bold text-foreground">
-                  The Done Pile
-                </h2>
-                <button
-                  onClick={() => setIsDonePileOpen(false)}
-                  aria-label="Close done pile"
-                  className="w-12 h-12 bg-white/80 rounded-full flex items-center justify-center hover:bg-white transition-colors shadow-sm"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-
-              <RestoreZone visible={state.done.length > 0} />
-
-              <div className="flex-1 overflow-x-auto p-8 flex items-center gap-8 snap-x relative z-10">
-                {state.done.length === 0 ? (
-                  <div className="w-full text-center text-foreground/40 text-xl">
-                    Nothing here yet.
-                  </div>
-                ) : (
-                  state.done.map((postIt) => (
-                    <div key={postIt.id} className="relative group">
-                      <DraggableDoneCard postIt={postIt} />
-                      <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => {
-                            unretirePostIt(
-                              postIt.id,
-                              window.innerWidth / 2 - NOTE_SIZE / 2,
-                              window.innerHeight / 2 - NOTE_SIZE / 2,
-                            );
-                          }}
-                          className="bg-secondary text-secondary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-secondary/80 transition-colors"
-                        >
-                          Un-retire
-                        </button>
-                        <button
-                          onClick={() => deleteDonePostIt(postIt.id)}
-                          className="bg-destructive/10 text-destructive px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-destructive/20 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
+            <div className="flex-1 overflow-x-auto p-8 flex items-center gap-8 snap-x relative z-10">
+              {state.done.length === 0 ? (
+                <div className="w-full text-center text-foreground/40 text-xl">
+                  Nothing here yet.
+                </div>
+              ) : (
+                state.done.map((postIt) => (
+                  <div key={postIt.id} className="relative group">
+                    <DraggableDoneCard
+                      postIt={postIt}
+                      onDragEnd={(point) =>
+                        handleDoneCardDragEnd(postIt, point)
+                      }
+                    />
+                    <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => {
+                          unretirePostIt(
+                            postIt.id,
+                            window.innerWidth / 2 - NOTE_SIZE / 2,
+                            window.innerHeight / 2 - NOTE_SIZE / 2,
+                          );
+                        }}
+                        className="bg-secondary text-secondary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-secondary/80 transition-colors"
+                      >
+                        Un-retire
+                      </button>
+                      <button
+                        onClick={() => deleteDonePostIt(postIt.id)}
+                        className="bg-destructive/10 text-destructive px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-destructive/20 transition-colors"
+                      >
+                        Delete
+                      </button>
                     </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </DndContext>
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {state.done.length > 0 && !isDonePileOpen && (
         <div
-          className={`absolute bottom-12 right-12 w-48 h-48 cursor-pointer hover:scale-105 transition-transform ${pickedId ? "pointer-events-none" : ""}`}
-          onClick={() => {
-            if (pickedId) return;
-            setIsDonePileOpen(true);
-          }}
+          className="absolute bottom-12 right-12 w-48 h-48 cursor-pointer hover:scale-105 transition-transform"
+          onClick={() => setIsDonePileOpen(true)}
           role="button"
           tabIndex={0}
           aria-label="Open the done pile"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !pickedId) setIsDonePileOpen(true);
+            if (e.key === "Enter") setIsDonePileOpen(true);
           }}
         >
           {state.done.slice(-5).map((postIt, i) => (
@@ -910,13 +894,6 @@ function StickyWall() {
               Open Pile
             </span>
           </div>
-        </div>
-      )}
-
-      {pickedId && (
-        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-40 bg-primary text-primary-foreground px-5 py-2 rounded-full shadow-lg text-sm font-semibold pointer-events-none">
-          Tap the wall to place, the done area to retire, or press Esc to
-          cancel.
         </div>
       )}
 
@@ -1064,15 +1041,12 @@ function StickyWall() {
                     wherever you want. (Or press <Kbd>N</Kbd>.)
                   </li>
                   <li>
-                    <Kbd>Drag</Kbd> notes anywhere. On touch, long-press a note
-                    or tap its <em>move</em> handle, then tap the wall to
-                    place it.
+                    <Kbd>Drag</Kbd> notes anywhere with mouse or touch.
                   </li>
                   <li>
                     With a note Tab-focused, the <Kbd>arrow keys</Kbd> nudge
-                    it, <Kbd>Enter</Kbd> (or <Kbd>Backspace</Kbd>) retires it,{" "}
-                    <Kbd>E</Kbd> opens the editor, and <Kbd>M</Kbd> picks it
-                    up to move.
+                    it, <Kbd>Enter</Kbd> (or <Kbd>Backspace</Kbd>) retires it,
+                    and <Kbd>E</Kbd> opens the editor.
                   </li>
                   <li>
                     <Kbd>Retire</Kbd> a note by dragging it onto the

@@ -1,0 +1,39 @@
+STAGE 1 of 3: Replace the current drag mechanism with framer-motion's drag
+system so post-its follow the cursor smoothly during drag.
+
+IMPLEMENTATION:
+1. In the post-it component, replace the wrapping element with motion.div
+   from framer-motion.
+2. Set drag={true}, dragMomentum={false}, dragElastic={0}.
+3. Use onDragEnd to commit the final position to state/storage. The handler
+   receives (event, info) — use info.point or compute from the element's
+   transform; do NOT rely on event.clientX alone.
+4. Preserve the existing rotation: rotation must remain applied via the same
+   style/transform mechanism it currently uses, NOT replaced by framer-motion's
+   rotate prop. The post-it should drag with its rotation intact.
+5. Tap-to-complete must still work. Use framer-motion's onTap (not onClick)
+   so a small drag does not register as a tap. Threshold: framer-motion's
+   default is fine.
+6. While dragging, raise the post-it visually:
+     - whileDrag={{ scale: 1.05, zIndex: 50, boxShadow: "0 12px 24px rgba(0,0,0,0.18)" }}
+   The non-dragging shadow should remain whatever it currently is.
+
+DO NOT in this stage:
+- Do NOT implement frame constraints yet (that's Stage 2). It's fine if
+  post-its can still leave the frame after this stage.
+- Do NOT implement auto-sort (Stage 3).
+- Do NOT change how positions are persisted — only how they're updated
+  during interaction.
+- Do NOT animate the rotation. Rotation stays static per post-it.
+
+ACCEPTANCE CRITERIA (verify in browser preview before reporting done):
+- Clicking and holding a post-it, then moving the mouse: the post-it tracks
+  the cursor in real time with no perceptible lag.
+- Releasing the mouse: post-it stays where it was dropped, no snap-back, no
+  jump.
+- Single click without drag: post-it gets marked complete (existing behavior).
+- Rotation is preserved during and after drag.
+- Works on both the main board and the archive page.
+- Refreshing the page: post-its are at their last-dropped positions.
+
+STOP. Report files changed and confirm acceptance criteria one by one.

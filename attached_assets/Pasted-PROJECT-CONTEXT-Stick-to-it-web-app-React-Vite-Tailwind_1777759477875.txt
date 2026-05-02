@@ -1,0 +1,51 @@
+PROJECT CONTEXT: Stick to it web app, React + Vite + Tailwind. Existing
+features: post-its render on a board with random position + rotation,
+tap-to-complete, archive page for completed todos, theme system.
+
+THREE BUGS / FEATURES TO ADDRESS, IN ORDER:
+1. Drag animation — currently post-its "teleport" to drop location with no
+   live drag visual. I want the post-it to follow the cursor smoothly while
+   I'm dragging.
+2. Frame containment — post-its can currently be dragged outside the board's
+   visible bounds on both the main page and the archive page. They must be
+   constrained to stay fully inside the board frame.
+3. Auto-sort — add a button that lays out post-its in a tidy grid (no
+   overlap) until the board is full, then allows overlap for the remainder.
+   Existing positions should be overwritten by the sort.
+
+TECH CONSTRAINT (PINNED):
+- Use framer-motion (latest 11.x) for drag. If framer-motion is not already
+  installed, install it via the Replit packager — do NOT add it directly to
+  package.json by hand.
+- If framer-motion is already in package.json, confirm the version and use
+  the existing one rather than upgrading.
+
+BEFORE STARTING:
+- Read the current implementation of the post-it component and the board
+  component(s). Tell me which files they live in and which library (if any)
+  is currently handling drag. List in 5 bullets:
+    1. Post-it component file path
+    2. Board component file path(s) — main + archive
+    3. Current drag mechanism (library, custom, or none)
+    4. Current position state shape (where is x/y stored, normalized or px?)
+    5. Whether framer-motion is already installed
+- Then ask any blockers before I send Stage 1. Do not write code yet.
+
+DO NOT (applies to all 3 stages):
+- Do NOT refactor unrelated files. Stay in the post-it + board components
+  and any shared utilities directly involved.
+- Do NOT change the data model or persistence layer. Position is still
+  saved per-todo, same shape as before.
+- Do NOT add new libraries beyond framer-motion. No react-dnd, no dnd-kit,
+  no react-spring.
+- Do NOT change the visual design of post-its (size, font, shadow, color).
+- Do NOT touch the archive page's data flow — only its drag/containment
+  behavior.
+- Do NOT mark a stage complete without running the dev server and visually
+  confirming in the browser preview that the acceptance criteria pass.
+
+WORKING STYLE:
+- After each stage, list every file changed with full path, summarize the
+  diff in 3 bullets, and STOP. Wait for me to verify before next stage.
+- If you encounter an error you cannot resolve in 2 attempts, stop and
+  describe it instead of trying random fixes.
