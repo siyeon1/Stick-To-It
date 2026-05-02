@@ -1,0 +1,48 @@
+STAGE 4 of 5: Make widget post-its tappable. iOS 17+ AppIntent pattern.
+
+Create / modify:
+
+1. CompleteTodoIntent.swift in Sources/Shared/ (must be in the build phases
+   of BOTH targets):
+     - struct CompleteTodoIntent: AppIntent
+     - static var title: LocalizedStringResource = "Complete Todo"
+     - @Parameter(title: "Todo ID") var todoID: String
+     - init() {}
+     - init(todoID: String) { self.todoID = todoID }
+     - func perform() async throws -> some IntentResult {
+           guard let uuid = UUID(uuidString: todoID) else { return .result() }
+           let store = TodoStore()
+           store.complete(id: uuid)
+           WidgetCenter.shared.reloadAllTimelines()
+           return .result()
+       }
+
+2. Modify StickToItWidgetView.swift: wrap each post-it in
+       Button(intent: CompleteTodoIntent(todoID: item.id.uuidString)) {
+           postItContent
+       }
+       .buttonStyle(.plain)
+
+3. Add a tiny hint at the bottom-leading edge of the widget when todos > 0:
+     - Text("tap to clear"), SF Pro Rounded, 9pt, color #2C2C2C @ 0.4 opacity
+     - 8pt padding from edges
+
+CRITICAL:
+- AppIntent must be available to BOTH the widget extension AND the main app.
+  Easiest: keep CompleteTodoIntent.swift in Sources/Shared/ and add it to
+  both targets' Build Phases > Compile Sources. Document this in README.
+- Do NOT use .onTapGesture — silently fails in widgets.
+- Tap → intent → mutates shared storage → triggers reload → next render
+  omits the post-it. Expect a 200–500ms perceptible delay. Do not attempt
+  to fake an animation.
+- Handle the case where todoID no longer exists in storage gracefully
+  (return .result() without erroring).
+
+ACCEPTANCE CRITERIA:
+- Tapping a post-it on the widget removes it within ~0.5s.
+- The same todo no longer appears in the main app the next time BoardView
+  appears.
+- Tapping a stale post-it (one already completed in the app) does not crash
+  the widget.
+
+STOP after Stage 4. Confirm by listing files modified.

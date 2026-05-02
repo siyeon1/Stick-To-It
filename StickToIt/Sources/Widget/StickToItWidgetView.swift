@@ -1,5 +1,6 @@
 import SwiftUI
 import WidgetKit
+import AppIntents
 
 struct StickToItWidgetView: View {
     @Environment(\.widgetFamily) var family
@@ -31,18 +32,30 @@ struct StickToItWidgetView: View {
             let widgetSize = geometry.size
 
             ForEach(visibleTodos) { item in
-                postItView(for: item, size: postItSize)
-                    .position(
-                        x: item.positionX * widgetSize.width,
-                        y: item.positionY * widgetSize.height
-                    )
+                Button(intent: CompleteTodoIntent(todoID: item.id.uuidString)) {
+                    postItContent(for: item, size: postItSize)
+                }
+                .buttonStyle(.plain)
+                .position(
+                    x: item.positionX * widgetSize.width,
+                    y: item.positionY * widgetSize.height
+                )
+            }
+
+            if !visibleTodos.isEmpty {
+                Text("tap to clear")
+                    .font(.system(size: 9, weight: .regular, design: .rounded))
+                    .foregroundStyle(Color(hex: "#2C2C2C").opacity(0.4))
+                    .padding(.leading, 8)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
         }
         .containerBackground(Color(hex: "#F5F1E8"), for: .widget)
     }
 
     @ViewBuilder
-    private func postItView(for item: TodoItem, size: CGFloat) -> some View {
+    private func postItContent(for item: TodoItem, size: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 4)
                 .fill(item.colorTheme.colors[item.colorIndex])

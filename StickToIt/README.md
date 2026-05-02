@@ -60,7 +60,14 @@ The files in `Sources/Shared/` must be compiled into both the app target and the
    - `ColorTheme.swift`
    - `TodoStore.swift`
    - `LayoutEngine.swift`
+   - `CompleteTodoIntent.swift`
 2. In the **Add to targets** dialog, check **both** `StickToIt` and `StickToItWidget`.
+
+> **Important — `CompleteTodoIntent.swift`:** This file must be compiled into
+> both targets. The widget extension uses it to render `Button(intent:)` taps,
+> and the main app target needs it so the system can resolve the intent. If it
+> is only in the widget target, the intent will silently fail to execute on
+> device. Verify membership as described below.
 
 To verify after adding: select any shared file → open the **File Inspector** (right panel) → confirm both targets are checked under **Target Membership**.
 
