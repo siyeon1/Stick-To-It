@@ -1,0 +1,69 @@
+PROJECT: Stick to it — a native iOS todo app with an interactive home-screen widget
+that displays todos as post-its on a clean colored board. Tapping a post-it on
+the widget marks the todo complete and the post-it disappears on next render.
+
+TECH STACK (PIN THESE — do not substitute):
+- Swift 5.9+, SwiftUI
+- iOS 17.0 minimum (REQUIRED for interactive widgets via AppIntent)
+- WidgetKit + AppIntents framework
+- Xcode 15+ project structure
+- Two targets: main app + widget extension
+- Shared App Group identifier: group.com.siyeonkang.sticktoit
+- Persistence: shared UserDefaults via App Group (no Core Data, no SwiftData,
+  no CloudKit, no third-party deps)
+
+AESTHETIC:
+- Single background color across app and widget: warm off-white #F5F1E8
+- Clean, minimal, generous whitespace, light mode only for v1
+- Post-its are the only color; chrome stays neutral
+- App typography: SF Pro Rounded
+- No textures, no cork, no paper grain — solid color background only
+
+DATA MODEL:
+struct TodoItem: Codable, Identifiable {
+    let id: UUID
+    var text: String
+    var colorTheme: ColorTheme   // theme active when this todo was created
+    var colorIndex: Int          // index into theme.colors, assigned at creation
+    var rotation: Double         // -8.0...8.0 degrees, assigned at creation
+    var positionX: Double        // 0.0...1.0 normalized, assigned at creation
+    var positionY: Double        // 0.0...1.0 normalized, assigned at creation
+    var createdAt: Date
+    var isComplete: Bool
+}
+
+enum ColorTheme: String, Codable, CaseIterable {
+    case pastel, muted, bold, mono
+}
+
+COLOR THEMES (use these exact hex values, 5 colors per theme):
+- pastel: #FFE89A, #FFC4D1, #BFDCFF, #CFE9C0, #DDC9F0
+- muted:  #D4A5A5, #B8C9A8, #A8B5C9, #E0CC9E, #C9A48F   ← default theme
+- bold:   #FF7A6B, #4DB6AC, #E5B454, #3D5A80, #C7508E
+- mono:   #4A4A4A, #6B6B6B, #8C8C8C, #ADADAD, #CFCFCF
+
+CRITICAL CONSTRAINTS — DO NOT:
+- Do NOT generate position or rotation in the widget render path. Both are
+  persisted with the TodoItem at creation time and read from shared storage.
+  Layout MUST be deterministic across renders.
+- Do NOT animate post-its appearing/disappearing in the widget. WidgetKit
+  does not support arbitrary animations. The post-it simply isn't there on
+  the next timeline render.
+- Do NOT use .onTapGesture in widget views — it does nothing in widgets.
+  Use Button(intent:) with an AppIntent. iOS 17+ pattern only.
+- Do NOT use Core Data, SwiftData, CloudKit, or any external dependency.
+- Do NOT invent SwiftUI or WidgetKit APIs. If you are uncertain whether an
+  API exists or has the signature you remember, STOP and tell me — do not
+  guess.
+
+WORKING STYLE:
+- I will send this project in 5 stages. After EACH stage, stop, list every
+  file you created or modified with its full path, and wait for me to send
+  the next stage. Do NOT preemptively build features from later stages.
+- If a stage's instructions are ambiguous, ask before coding.
+- Show me your acceptance-criteria checks at the end of each stage.
+
+Before starting Stage 1: restate this brief back to me as 5 short bullets
+covering (1) what we're building, (2) the stack, (3) the aesthetic, (4) the
+data model, (5) the top 3 things you must NOT do. Then ask any clarifying
+questions you have. Do not write any code yet.
