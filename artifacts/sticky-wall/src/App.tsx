@@ -323,6 +323,127 @@ function SketchPlus({ size = 36, color = INK, opacity = 0.35 }: {
   );
 }
 
+/**
+ * Decorative illustration shown above the empty-state text. Three small
+ * overlapping post-its in the Granola palette, lightly rotated and passed
+ * through the same pencil-roughen filter as the rest of the sketched UI.
+ * Purely decorative — `aria-hidden` so screen readers ignore it.
+ */
+function EmptyStateIllustration() {
+  return (
+    <svg
+      width="140"
+      height="92"
+      viewBox="0 0 140 92"
+      aria-hidden="true"
+      style={{ display: "block", overflow: "visible" }}
+    >
+      <g style={{ filter: `url(#${"sticky-pencil-roughen"})`, opacity: 0.7 }}>
+        {/* Back note — peach, tilted left */}
+        <g transform="translate(20 18) rotate(-10 22 22)">
+          <rect
+            width="44"
+            height="44"
+            fill="#E9C9B7"
+            stroke={INK}
+            strokeWidth="1.2"
+          />
+          <line
+            x1="7"
+            y1="16"
+            x2="34"
+            y2="16"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+          <line
+            x1="7"
+            y1="25"
+            x2="28"
+            y2="25"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+        </g>
+        {/* Middle note — olive-green, slight right tilt */}
+        <g transform="translate(76 12) rotate(6 22 22)">
+          <rect
+            width="44"
+            height="44"
+            fill="#D9E2B8"
+            stroke={INK}
+            strokeWidth="1.2"
+          />
+          <line
+            x1="7"
+            y1="16"
+            x2="34"
+            y2="16"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+          <line
+            x1="7"
+            y1="25"
+            x2="30"
+            y2="25"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+          <line
+            x1="7"
+            y1="34"
+            x2="22"
+            y2="34"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+        </g>
+        {/* Front note — sand, nudged forward and down */}
+        <g transform="translate(50 38) rotate(-2 22 22)">
+          <rect
+            width="44"
+            height="44"
+            fill="#E8D9B4"
+            stroke={INK}
+            strokeWidth="1.2"
+          />
+          <line
+            x1="7"
+            y1="16"
+            x2="34"
+            y2="16"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+          <line
+            x1="7"
+            y1="25"
+            x2="32"
+            y2="25"
+            stroke={INK}
+            strokeOpacity="0.35"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 function Pad({ onClick }: { onClick: () => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -622,7 +743,8 @@ function StickyWall() {
         onDragEnd={handleDragEnd}
       >
         {state.wall.length === 0 && state.done.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 pointer-events-none">
+            <EmptyStateIllustration />
             <p className="text-foreground/40 text-xl font-medium tracking-wide">
               Pull a note to start thinking...
             </p>
