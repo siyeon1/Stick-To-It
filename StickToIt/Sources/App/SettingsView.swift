@@ -1,8 +1,10 @@
 import SwiftUI
+import WidgetKit
 
 struct SettingsView: View {
     private let defaults = UserDefaults(suiteName: "group.com.siyeonkang.sticktoit")
     private let themeKey = "defaultTheme"
+    private let store = TodoStore()
 
     @State private var selectedTheme: ColorTheme = .muted
 
@@ -26,6 +28,8 @@ struct SettingsView: View {
                             .pickerStyle(.segmented)
                             .onChange(of: selectedTheme) { _, newTheme in
                                 defaults?.set(newTheme.rawValue, forKey: themeKey)
+                                store.retheme(to: newTheme)
+                                WidgetCenter.shared.reloadAllTimelines()
                             }
 
                             HStack(spacing: 8) {

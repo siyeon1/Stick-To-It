@@ -50,6 +50,19 @@ struct BoardView: View {
                     }
                 }
 
+                if activeTodos.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 32, weight: .regular))
+                            .foregroundStyle(Color(hex: "#2C2C2C").opacity(0.3))
+                        Text("All clear")
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                            .foregroundStyle(Color(hex: "#2C2C2C").opacity(0.3))
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("No todos. All clear.")
+                }
+
                 VStack {
                     Spacer()
                     HStack {
@@ -111,11 +124,15 @@ struct BoardView: View {
                     .foregroundStyle(Color(hex: "#2C2C2C"))
                     .multilineTextAlignment(.leading)
                     .lineLimit(4)
+                    .truncationMode(.tail)
                     .padding(8)
             }
             .frame(width: 120, height: 120)
         }
         .buttonStyle(.plain)
         .rotationEffect(.degrees(item.rotation))
+        .accessibilityLabel("Todo: \(item.text)")
+        .accessibilityHint("Double tap to mark complete")
+        .accessibilityAddTraits(.isButton)
     }
 }

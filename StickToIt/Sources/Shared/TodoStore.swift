@@ -61,4 +61,15 @@ final class TodoStore {
         let items = load().filter { !$0.isComplete }
         save(items)
     }
+
+    /// Re-assigns colorTheme and preserves colorIndex variety (mod 5) on all
+    /// existing items. Position and rotation are unchanged.
+    func retheme(to newTheme: ColorTheme) {
+        var items = load()
+        for index in items.indices {
+            items[index].colorTheme = newTheme
+            items[index].colorIndex = items[index].colorIndex % newTheme.colors.count
+        }
+        save(items)
+    }
 }
