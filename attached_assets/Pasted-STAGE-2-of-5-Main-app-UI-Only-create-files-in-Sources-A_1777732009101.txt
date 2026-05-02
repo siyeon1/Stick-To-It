@@ -1,0 +1,63 @@
+STAGE 2 of 5: Main app UI. Only create files in Sources/App/. Read but do
+not modify Sources/Shared/.
+
+Create:
+
+1. StickToItApp.swift — @main App entry, single WindowGroup containing
+   ContentView. Apply .preferredColorScheme(.light) at the App level.
+
+2. ContentView.swift — TabView with two tabs:
+     - "Board" (SF Symbol: square.grid.2x2)
+     - "Settings" (SF Symbol: gear)
+
+3. BoardView.swift — full-screen preview of how the widget will look.
+     - Background: Color(hex: "#F5F1E8")
+     - Reads todos from TodoStore on .onAppear and .onChange of scenePhase
+     - GeometryReader to get boardSize
+     - For each non-complete todo, render a post-it:
+         * 120x120pt RoundedRectangle, cornerRadius 4
+         * Fill: item.colorTheme.colors[item.colorIndex]
+         * Drop shadow: color black @ 0.12 opacity, radius 4, x 0, y 2
+         * .rotationEffect(.degrees(item.rotation))
+         * .position(x: item.positionX * boardSize.width,
+                     y: item.positionY * boardSize.height)
+         * Overlay: text, SF Pro Rounded, 14pt, .medium weight,
+           color #2C2C2C, 8pt padding, 4-line limit, .multilineTextAlignment(.leading)
+     - Tapping a post-it (regular SwiftUI Button with .buttonStyle(.plain))
+       calls TodoStore.complete(id:) and then
+       WidgetCenter.shared.reloadAllTimelines()
+     - Floating "+" button bottom-right: 56pt circle, fill = first color of
+       active theme, white "+" icon, presents AddTodoView as sheet
+
+4. AddTodoView.swift — sheet with:
+     - TextField("What's on your mind?", text: $draft), 16pt SF Pro Rounded
+     - Theme override picker (segmented control) — defaults to user's saved
+       default theme from Settings
+     - Save and Cancel buttons in a toolbar
+     - On save: call TodoStore.add(text:theme:boardSize:), where boardSize
+       is passed in from BoardView via a binding or environment value, then
+       call WidgetCenter.shared.reloadAllTimelines() and dismiss
+
+5. SettingsView.swift —
+     - Section "Default Theme" with a Picker bound to UserDefaults (in the
+       App Group, key "defaultTheme"). Below the picker, show all 5 swatches
+       of the currently selected theme as small circles in an HStack.
+     - Section "About" with version number from Bundle.
+
+UI RULES (apply globally):
+- All view backgrounds: Color(hex: "#F5F1E8")
+- Primary text color: #2C2C2C
+- Buttons: capsule shape, theme color fill, white text
+- Navigation titles: .large, SF Pro Rounded
+- No emoji in chrome
+
+ACCEPTANCE CRITERIA:
+- I can launch the app, tap +, type "Buy milk", save, and see a post-it
+  appear on the board with a position from LayoutEngine, a random color
+  from the active theme, and a small rotation.
+- Tapping that post-it removes it from the board.
+- Changing the default theme in Settings persists across app launches.
+- Adding 6 todos in a row produces 6 visually distinct, non-heavily-overlapping
+  post-its.
+
+STOP after Stage 2. List files. Do NOT build the widget yet.
