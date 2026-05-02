@@ -114,6 +114,25 @@ export function usePostItStore() {
     [update],
   );
 
+  // Apply a clamp function to every wall post-it in a single batched
+  // update — used by the safe-area resize handler so a viewport shrink
+  // doesn't strand any notes off-screen or under the overlays.
+  const clampWall = useCallback(
+    (clamp: (p: PostIt) => { x: number; y: number }) => {
+      update((prev) => {
+        let changed = false;
+        const wall = prev.wall.map((p) => {
+          const c = clamp(p);
+          if (c.x === p.x && c.y === p.y) return p;
+          changed = true;
+          return { ...p, x: c.x, y: c.y };
+        });
+        return changed ? { ...prev, wall } : prev;
+      });
+    },
+    [update],
+  );
+
   return {
     state,
     stateRef,
@@ -123,5 +142,6 @@ export function usePostItStore() {
     retirePostIt,
     unretirePostIt,
     deleteDonePostIt,
+    clampWall,
   };
 }

@@ -35,6 +35,115 @@ function generatePostIt(x: number, y: number, text = ""): PostIt {
 
 type Point = { x: number; y: number };
 
+type SafeArea = { top: number; left: number; right: number; bottom: number };
+
+// Breathing room between a wall note and any overlay element. Notes can
+// drag right up against the toolbar/pad/Done-zone visually, but stop 8px
+// shy of them so they never tuck underneath.
+const SAFE_MARGIN = 8;
+
+function computeSafeArea(
+  toolbar: DOMRect | undefined,
+  pad: DOMRect | undefined,
+  done: DOMRect | undefined,
+): SafeArea {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 768;
+  // Top: just below the toolbar (or viewport top if no toolbar measured yet).
+  const top = (toolbar ? toolbar.bottom : 0) + SAFE_MARGIN;
+  // Bottom: above whichever of pad / done-zone reaches higher up the screen.
+  // We treat the safe area as a single axis-aligned rectangle, which means
+  // the horizontal middle of the bottom strip (currently empty space between
+  // pad and done-zone) is also excluded. That's the documented v1 trade-off.
+  const bottomEdge = Math.min(
+    pad ? pad.top : vh,
+    done ? done.top : vh,
+  );
+  const bottom = bottomEdge - SAFE_MARGIN;
+  return {
+    top,
+    left: SAFE_MARGIN,
+    right: vw - SAFE_MARGIN,
+    bottom,
+  };
+}
+
+// Tracks the rectangle inside the viewport in which a wall post-it's
+// bounding box must remain entirely. Recomputes on window resize and on a
+// ResizeObserver attached to each overlay element so changes in toolbar
+// height (content reflow) or pad height (stack growth) propagate within a
+// frame.
+function useSafeArea(refs: {
+  toolbar: React.RefObject<HTMLElement | null>;
+  pad: React.RefObject<HTMLElement | null>;
+  done: React.RefObject<HTMLElement | null>;
+}): SafeArea {
+  const [safeArea, setSafeArea] = useState<SafeArea>(() =>
+    computeSafeArea(undefined, undefined, undefined),
+  );
+
+  useEffect(() => {
+    let raf = 0;
+    const recompute = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const next = computeSafeArea(
+          refs.toolbar.current?.getBoundingClientRect(),
+          refs.pad.current?.getBoundingClientRect(),
+          refs.done.current?.getBoundingClientRect(),
+        );
+        setSafeArea((prev) =>
+          prev.top === next.top &&
+          prev.left === next.left &&
+          prev.right === next.right &&
+          prev.bottom === next.bottom
+            ? prev
+            : next,
+        );
+      });
+    };
+    recompute();
+    window.addEventListener("resize", recompute);
+    const observers: ResizeObserver[] = [];
+    [refs.toolbar.current, refs.pad.current, refs.done.current].forEach(
+      (el) => {
+        if (!el) return;
+        const obs = new ResizeObserver(recompute);
+        obs.observe(el);
+        observers.push(obs);
+      },
+    );
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", recompute);
+      observers.forEach((o) => o.disconnect());
+    };
+  }, [refs.toolbar, refs.pad, refs.done]);
+
+  return safeArea;
+}
+
+function clampPointToSafeArea(
+  x: number,
+  y: number,
+  safeArea: SafeArea,
+  size = NOTE_SIZE,
+): Point {
+  const minX = safeArea.left;
+  const minY = safeArea.top;
+  const maxX = safeArea.right - size;
+  const maxY = safeArea.bottom - size;
+  // If the safe area is degenerate (smaller than the note), just pin to the
+  // top-left corner — better than producing inverted bounds.
+  if (maxX < minX || maxY < minY) {
+    return { x: minX, y: minY };
+  }
+  return {
+    x: Math.max(minX, Math.min(maxX, x)),
+    y: Math.max(minY, Math.min(maxY, y)),
+  };
+}
+
 type DraggablePostItProps = {
   postIt: PostIt;
   onOpenEditor: () => void;
@@ -49,6 +158,7 @@ type DraggablePostItProps = {
   isSearchMatch: boolean;
   isFaded: boolean;
   isFreshlyCreated: boolean;
+  safeArea: SafeArea;
 };
 
 function DraggablePostIt({
@@ -65,7 +175,23 @@ function DraggablePostIt({
   isSearchMatch,
   isFaded,
   isFreshlyCreated,
+  safeArea,
 }: DraggablePostItProps) {
+  // Per-note dragConstraints expressed in the same coordinate space as our
+  // motion x/y values. Because we drive position by writing the absolute
+  // viewport coordinate straight into the motion value (style.left/top are
+  // pinned at 0), the constraint is simply the safe rect minus the note's
+  // own size — no per-note `- postIt.x` translation is needed.
+  //
+  // Rotation: we constrain the unrotated layout box. With ±8° rotation the
+  // visual corners can poke up to ~14px past the AABB; that is acceptable
+  // for v1 and the SAFE_MARGIN absorbs most of it.
+  const dragConstraints = {
+    top: safeArea.top,
+    left: safeArea.left,
+    right: Math.max(safeArea.left, safeArea.right - NOTE_SIZE),
+    bottom: Math.max(safeArea.top, safeArea.bottom - NOTE_SIZE),
+  };
   // Drive position purely through framer-motion's motion values, seeded
   // from the persisted state. We deliberately do NOT also set
   // `style.left/top` from postIt.x/y — keeping two sources of truth caused
@@ -88,6 +214,7 @@ function DraggablePostIt({
       drag
       dragMomentum={false}
       dragElastic={0}
+      dragConstraints={dragConstraints}
       onDragStart={() => {
         setIsDragging(true);
         onDragStart();
@@ -395,9 +522,11 @@ function EmptyStateIllustration() {
 function Pad({
   onTap,
   onDragEnd,
+  nodeRef,
 }: {
   onTap: () => void;
   onDragEnd: (offset: Point) => void;
+  nodeRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
@@ -405,6 +534,7 @@ function Pad({
 
   return (
     <motion.div
+      ref={nodeRef}
       drag
       dragMomentum={false}
       dragElastic={0}
@@ -544,6 +674,7 @@ function StickyWall() {
     retirePostIt,
     unretirePostIt,
     deleteDonePostIt,
+    clampWall,
   } = usePostItStore();
   const stateRef = useRef(state);
   useEffect(() => {
@@ -565,6 +696,21 @@ function StickyWall() {
 
   const doneZoneRef = useRef<HTMLDivElement>(null);
   const wallRestoreRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const padRef = useRef<HTMLDivElement>(null);
+
+  const safeArea = useSafeArea({
+    toolbar: toolbarRef,
+    pad: padRef,
+    done: doneZoneRef,
+  });
+
+  // When the safe area shrinks (window resize, pad/toolbar reflow), pull any
+  // wall note that's now outside the new safe rectangle back inside in a
+  // single batched update. Notes that were already inside are left alone.
+  useEffect(() => {
+    clampWall((p) => clampPointToSafeArea(p.x, p.y, safeArea));
+  }, [safeArea, clampWall]);
 
   const markFresh = useCallback((id: string) => {
     setFreshIds((prev) => {
@@ -619,6 +765,12 @@ function StickyWall() {
     (postIt: PostIt, offset: Point, point: Point) => {
       setIsAnyPostItDragging(false);
       setIsOverDoneZone(false);
+      // Retire-vs-clamp ordering: hit-test the Done zone FIRST. If the
+      // user released inside the Done zone we retire and never persist a
+      // clamped wall position. Only when the drop is NOT a retire do we
+      // clamp the dropped position to the safe area before persisting —
+      // this catches mid-flick releases where dragConstraints didn't
+      // quite finish reining the note in.
       const rect = doneZoneRef.current?.getBoundingClientRect();
       if (pointInRect(point, rect)) {
         retirePostIt(postIt.id);
@@ -626,12 +778,14 @@ function StickyWall() {
         toast("Sent to the done pile", { position: "bottom-center" });
         return;
       }
-      updatePostIt(postIt.id, {
-        x: postIt.x + offset.x,
-        y: postIt.y + offset.y,
-      });
+      const clamped = clampPointToSafeArea(
+        postIt.x + offset.x,
+        postIt.y + offset.y,
+        safeArea,
+      );
+      updatePostIt(postIt.id, clamped);
     },
-    [retirePostIt, updatePostIt],
+    [retirePostIt, updatePostIt, safeArea],
   );
 
   const handlePadDragEnd = useCallback(
@@ -744,7 +898,11 @@ function StickyWall() {
         </div>
       )}
 
-      <Pad onTap={handleCreateNew} onDragEnd={handlePadDragEnd} />
+      <Pad
+        onTap={handleCreateNew}
+        onDragEnd={handlePadDragEnd}
+        nodeRef={padRef}
+      />
       <DoneZone
         count={state.done.length}
         isOver={isOverDoneZone}
@@ -790,6 +948,7 @@ function StickyWall() {
             isSearchMatch={!!isMatch}
             isFaded={!!isFaded}
             isFreshlyCreated={freshIds.has(postIt.id)}
+            safeArea={safeArea}
           />
         );
       })}
@@ -897,7 +1056,10 @@ function StickyWall() {
         </div>
       )}
 
-      <div className="absolute top-8 right-8 flex gap-3 z-40">
+      <div
+        ref={toolbarRef}
+        className="absolute top-8 right-8 flex gap-3 z-40"
+      >
         <button
           onClick={() => setIsSearchOpen(!isSearchOpen)}
           aria-label="Search notes"

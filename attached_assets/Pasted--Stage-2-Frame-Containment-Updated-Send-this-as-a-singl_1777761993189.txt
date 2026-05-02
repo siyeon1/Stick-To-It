@@ -1,0 +1,164 @@
+# Stage 2 — Frame Containment (Updated)
+
+Send this as a single message in Build mode. Stage 1 is committed; this builds on it.
+
+---
+
+```
+STAGE 2 of 3: Constrain post-it dragging so notes cannot end up underneath
+the overlaid UI (toolbar, pad, Done zone) or beyond the viewport edges.
+
+CONTEXT FROM STAGE 1 (do not re-derive):
+- Wall is `fixed inset-0` (full-viewport). The toolbar (top), pad (bottom-
+  left), and Done zone (bottom-right) are overlay elements rendered above
+  the wall, not siblings inside a smaller bounded board.
+- Wall notes are framer-motion motion.div with drag enabled, position
+  driven by motion values seeded from postIt.x/y, with style.rotate for
+  rotation. Pad and DoneCard use dragSnapToOrigin (those don't need
+  constraints — they snap back).
+- Existing refs: doneZoneRef, wallRestoreRef. You'll add more.
+
+THE CORE PROBLEM:
+Naive dragConstraints={wallRef} would use the full viewport as the bound,
+which doesn't help — notes could still settle *underneath* the toolbar at
+the top, the pad at the bottom-left, or the Done zone at the bottom-right.
+The constraint must be the *visible safe area*: viewport minus the
+overlay footprints, minus the post-it's own dimensions.
+
+IMPLEMENTATION:
+
+1. Add refs to the three overlay elements:
+     - toolbarRef (top toolbar)
+     - padRef (bottom-left pad)
+     - doneZoneRef already exists — reuse it
+   Attach each ref to the outermost element of its respective component.
+
+2. Create a `useSafeArea` hook (or inline logic in StickyWall):
+     - Reads getBoundingClientRect() of toolbar, pad, doneZone on mount.
+     - Recomputes on window resize and on a ResizeObserver attached to
+       each overlay element (the pad's height can change when the stack
+       grows; the toolbar's height can change if content reflows).
+     - Returns: { top, left, right, bottom } in viewport coordinates,
+       representing the safe rectangle inside which a post-it's bounding
+       box must remain entirely.
+     - Add an 8px breathing margin on each side so notes don't kiss the
+       overlay edges.
+
+3. Compute per-note dragConstraints:
+     Because each post-it has a different size (post-it body is fixed
+     ~200x200, but rotation expands its axis-aligned bounding box), and
+     because dragConstraints in framer-motion are expressed relative to
+     the element's layout origin (not in viewport coordinates), you need
+     to translate safeArea into each note's local constraint space.
+
+     Approach:
+       - Treat the post-it's layout origin as its current (x, y) motion
+         values, which equal postIt.x / postIt.y.
+       - For each note, on drag start (onDragStart), compute:
+           const w = noteWidth;   // 200 (use the actual rendered size)
+           const h = noteHeight;  // 200
+           constraints = {
+             top:    safeArea.top    - postIt.y,
+             left:   safeArea.left   - postIt.x,
+             right:  safeArea.right  - postIt.x - w,
+             bottom: safeArea.bottom - postIt.y - h,
+           }
+       - Pass this object to dragConstraints on the motion.div for that
+         note. (Recomputed per drag start is fine — we don't need live
+         constraint updates mid-drag.)
+
+     If rotation makes the visual corners poke outside the AABB, that's
+     acceptable for v1 — we're constraining the layout box, not the
+     rotated bounding polygon. Document this in a code comment.
+
+4. Clamp on drag end AND on viewport resize:
+     - In onDragEnd for wall notes, after computing the new x/y, clamp
+       to safeArea minus note size before persisting. This handles the
+       edge case where the user releases mid-flick and the constraint
+       didn't quite catch them.
+     - Add a viewport resize handler that iterates all post-its and
+       clamps any that are now outside the new safe area to the nearest
+       valid position. Persist these clamped positions in a single
+       batched update.
+
+5. Touch parity:
+     Same constraints apply to touch drag. framer-motion handles this
+     uniformly — verify by testing on touch.
+
+DO NOT:
+- Do NOT add constraints to Pad or DoneCard drags. Those use
+  dragSnapToOrigin and don't persist position.
+- Do NOT change the overlay UI's z-index, position, or sizing.
+- Do NOT make safe area react to the editor modal's open state. The
+  editor isn't a constraint surface — it's a modal with its own backdrop.
+- Do NOT regress Stage 1: drag smoothness, onTap-opens-editor, retire on
+  drop into Done zone, restore from Done modal, rotation preservation,
+  no 450ms delay on touch. All must still work.
+- Do NOT introduce new dependencies. Use framer-motion + native
+  ResizeObserver + window resize event.
+- Do NOT add scrollbars to the wall.
+
+ACCEPTANCE CRITERIA (verify in a real browser preview, both desktop and
+a phone-sized viewport via dev tools):
+
+1. Toolbar: drag a note toward the top edge. It stops with its top edge
+   8px below the bottom of the toolbar. No part of the note's bounding
+   box overlaps the toolbar.
+2. Pad: drag a note toward the bottom-left. It stops 8px shy of the pad's
+   top and right edges. No overlap with the pad.
+3. Done zone: drag a note toward the bottom-right but NOT into the
+   retire trigger. The constraint should let the user enter the Done
+   zone for retire (existing Stage 1 behavior — drop into Done = retire),
+   but if they release outside the retire trigger, the note clamps to the
+   safe area, not under the Done zone.
+
+   IMPORTANT: confirm that retire-on-drop still works. The hit-test
+   against doneZoneRef happens in onDragEnd before the clamp is
+   persisted. If the drop is inside doneZoneRef, retire as before; only
+   clamp if the drop is NOT a retire.
+
+4. Viewport edges: drag toward each of the four screen edges. Note stops
+   at the edge with 8px margin, fully visible.
+5. Resize narrower: shrink the window so the safe area shrinks. Notes
+   that were near the right or bottom edge of the old safe area are now
+   inside the new safe area. None floating off-screen.
+6. Resize taller (window grows): existing notes stay where they are; no
+   forced re-layout.
+7. Pad height change: if the pad has a stack that grows (e.g., adding
+   notes increases its visual height), notes near the bottom-left clamp
+   to respect the new pad bounds within ~1 frame.
+8. Touch: same checks on a touch device or emulated touch — drag is
+   smooth, constraints apply, no perceptible delay.
+9. Stage 1 regression checks: tap-to-edit still works, drag-to-Done
+   retires, drag-from-Done restores, rotation preserved, refresh restores
+   positions.
+
+After completing, before reporting done, run typecheck and the e2e smoke
+test. Report files changed, summarize the diff in 3-5 bullets, and STOP.
+```
+
+---
+
+## Verification plan once the agent reports done
+
+Don't trust "acceptance criteria pass" without your own check. Specifically:
+
+1. **The retire-vs-clamp interaction is the riskiest part.** Drop a note into the Done zone — it should retire, not clamp. Drop a note *just outside* the Done zone — it should clamp, not retire. If those two cases get tangled, the agent's hit-test ordering is wrong.
+2. **Pad height change with a growing stack.** Add 5+ notes rapidly, then drag a note toward the bottom-left. The constraint should adjust to whatever the pad's current size is, not its original size. ResizeObserver makes this work; a one-shot rect read on mount does not.
+3. **Phone viewport.** Open dev tools, switch to mobile emulation, force-rotate, drag in each direction. Mobile-specific issues (pinch-zoom interfering, viewport units behaving weirdly with `100vh` on iOS Safari) are easy to miss on desktop.
+4. **Hard refresh.** Positions and rotations persist. Standard, but easy to break.
+
+If retire-vs-clamp is broken, that's a Stage 2 fix, not a Stage 3 thing. Don't advance until it's clean.
+
+## After Stage 2 passes
+
+Commit immediately:
+
+```
+git add -A && git commit -m "stage 2: safe-area frame containment"
+git push
+```
+
+Then send Stage 3 (auto-sort) from the original three-stage prompt — it doesn't need updating, the algorithm is independent of the safe-area work. The only tweak: when computing grid capacity, use safe-area dimensions (not raw viewport), so the tidy-up grid doesn't place notes under the toolbar.
+
+I'll write that one-line patch into Stage 3 when you're ready.
