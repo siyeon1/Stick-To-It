@@ -25,3 +25,8 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Artifacts
+
+- **Sticky Wall** (`artifacts/sticky-wall`, web, served at `/`) — single-page React + Vite SPA. A tactile post-it todo board: pad of blank notes bottom-left, freeform draggable wall, "DONE" pile bottom-right. No backend; all state persists in `localStorage` under key `sticky-wall:v1` as `{ wall: PostIt[], done: PostIt[] }`. Drag-and-drop via `@dnd-kit/core`, animations via `framer-motion`, toasts via `sonner`. Color palette and `#F5F1E8` wall background mirror the iOS sister app `StickToIt/`.
+- **API Server** (`artifacts/api-server`, mounted at `/api`) — scaffold only; not consumed by Sticky Wall.
