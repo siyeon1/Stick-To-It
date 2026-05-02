@@ -161,22 +161,37 @@ function DraggablePostIt({
   );
 }
 
-function DoneZone({ count, isPickActive }: { count: number; isPickActive: boolean }) {
+function DoneZone({
+  count,
+  isPickActive,
+  onPickDrop,
+}: {
+  count: number;
+  isPickActive: boolean;
+  onPickDrop: () => void;
+}) {
   const { isOver, setNodeRef } = useDroppable({ id: "done-zone" });
 
   return (
     <div
       ref={setNodeRef}
+      onClick={(e) => {
+        if (isPickActive) {
+          e.stopPropagation();
+          onPickDrop();
+        }
+      }}
       className={`
         absolute bottom-8 right-8 w-56 h-56 rounded-2xl border-2 border-dashed
-        transition-colors duration-200 flex flex-col items-center justify-center pointer-events-none
+        transition-colors duration-200 flex flex-col items-center justify-center
+        ${isPickActive ? "pointer-events-auto cursor-pointer" : "pointer-events-none"}
         ${isOver || isPickActive ? "border-foreground/30 bg-black/5" : "border-foreground/10 bg-transparent"}
       `}
     >
       <span className="text-foreground/30 font-medium text-lg tracking-wide uppercase">
-        Done
+        {isPickActive ? "Tap to retire" : "Done"}
       </span>
-      {count > 0 && (
+      {count > 0 && !isPickActive && (
         <span className="text-foreground/20 text-sm mt-1">{count} items</span>
       )}
     </div>
@@ -467,7 +482,16 @@ function StickyWall() {
         )}
 
         <Pad onClick={handleCreateNew} />
-        <DoneZone count={state.done.length} isPickActive={!!pickedId} />
+        <DoneZone
+          count={state.done.length}
+          isPickActive={!!pickedId}
+          onPickDrop={() => {
+            if (!pickedId) return;
+            retirePostIt(pickedId);
+            toast("Sent to the done pile", { position: "bottom-center" });
+            setPickedId(null);
+          }}
+        />
 
         {state.wall.map((postIt) => {
           const isMatch =
