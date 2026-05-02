@@ -1,0 +1,57 @@
+STAGE 1 of 5: Project scaffold and shared data layer.
+
+Since Replit cannot build iOS targets, generate the file/folder layout I'll
+import into Xcode. Use this exact structure:
+
+  StickToIt/
+    Sources/
+      App/         (main app target only)
+      Widget/      (widget extension target only)
+      Shared/      (added to BOTH target build phases)
+    Resources/
+    README.md      (Xcode-side setup steps)
+
+Create in Sources/Shared/:
+
+1. TodoItem.swift — the model exactly as specified in the Context Block.
+
+2. ColorTheme.swift — the enum with a computed property:
+       var colors: [Color] { ... }
+   returning 5 SwiftUI Colors per case using the hex values from the Context
+   Block. Include a small Color(hex:) initializer in this file.
+
+3. TodoStore.swift — class or struct with these methods:
+     - func load() -> [TodoItem]
+     - func save(_ items: [TodoItem])
+     - func add(text: String, theme: ColorTheme, boardSize: CGSize)
+     - func complete(id: UUID)
+     - func clearCompleted()
+   Persist to UserDefaults(suiteName: "group.com.siyeonkang.sticktoit") under
+   key "todos". JSON encode/decode. The add() method should call into
+   LayoutEngine to assign position and rotation, pick a random colorIndex
+   in 0..<5, then save.
+
+4. LayoutEngine.swift — static func:
+     assignPositionAndRotation(existing: [TodoItem]) -> (x: Double, y: Double, rotation: Double)
+   Algorithm: rejection sampling. Pick a random (x, y) in 0.08...0.92 (so
+   post-its don't clip edges). Reject if normalized distance to any existing
+   post-it < 0.18. Retry up to 30 times; if all rejected, return the
+   candidate with the largest minimum distance. Rotation: random Double in
+   -8.0...8.0.
+
+5. README.md — document the Xcode-side steps I'll do manually:
+     - Create App Group "group.com.siyeonkang.sticktoit"
+     - Enable App Group capability on BOTH targets
+     - Add Sources/Shared/*.swift files to BOTH targets in Build Phases
+     - Set iOS Deployment Target to 17.0 on both
+
+ACCEPTANCE CRITERIA (show me these checks):
+- TodoStore round-trips an array of 3 TodoItems through save() then load()
+  and the decoded array equals the input.
+- LayoutEngine, called 10 times against a growing list, never returns two
+  positions within 0.18 normalized distance unless the rejection cap is hit
+  (in which case it returns the best candidate, document this).
+- All files compile in isolation.
+
+STOP after Stage 1. Do NOT build any UI. List every file you created with
+full path and wait for Stage 2.
