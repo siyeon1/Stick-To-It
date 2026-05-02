@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Sticky Wall"
+version = "1.0.0"
+id = "artifacts/sticky-wall"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21144
+
+[services.development]
+run = "pnpm --filter @workspace/sticky-wall run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/sticky-wall", "run", "build" ]
+publicDir = "artifacts/sticky-wall/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21144"
+BASE_PATH = "/"
