@@ -8,10 +8,15 @@ struct BoardView: View {
 
     @State private var todos: [TodoItem] = []
     @State private var showingAddSheet = false
+    @State private var showingClearAlert = false
     @State private var boardSize: CGSize = .zero
 
     private var activeTodos: [TodoItem] {
         todos.filter { !$0.isComplete }
+    }
+
+    private var completedTodos: [TodoItem] {
+        todos.filter { $0.isComplete }
     }
 
     private var defaultTheme: ColorTheme {
@@ -87,6 +92,32 @@ struct BoardView: View {
             }
             .navigationTitle("Board")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                if !completedTodos.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingClearAlert = true
+                        } label: {
+                            Label("Clear Done", systemImage: "trash")
+                                .font(.system(.body, design: .rounded))
+                                .foregroundStyle(Color(hex: "#2C2C2C").opacity(0.5))
+                        }
+                        .accessibilityLabel("Clear \(completedTodos.count) completed todo\(completedTodos.count == 1 ? "" : "s")")
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Remove \(completedTodos.count) completed todo\(completedTodos.count == 1 ? "" : "s") from storage?",
+                isPresented: $showingClearAlert,
+                titleVisibility: .visible
+            ) {
+                Button("Clear Done", role: .destructive) {
+                    store.clearCompleted()
+                    todos = store.load()
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
+                Button("Cancel", role: .cancel) {}
+            }
             .onAppear {
                 todos = store.load()
             }
