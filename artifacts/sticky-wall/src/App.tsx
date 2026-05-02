@@ -41,6 +41,8 @@ type DraggablePostItProps = {
   postIt: PostIt;
   onOpenEditor: () => void;
   onPickRequested: () => void;
+  onRetireFromKeyboard: () => void;
+  onNudge: (dx: number, dy: number) => void;
   onFocusNote: () => void;
   onBlurNote: () => void;
   isFocused: boolean;
@@ -53,6 +55,8 @@ function DraggablePostIt({
   postIt,
   onOpenEditor,
   onPickRequested,
+  onRetireFromKeyboard,
+  onNudge,
   onFocusNote,
   onBlurNote,
   isFocused,
@@ -130,12 +134,52 @@ function DraggablePostIt({
       {...attributes}
       onFocus={onFocusNote}
       onBlur={onBlurNote}
-      aria-label={`Sticky note: ${postIt.text || "Empty"}. Enter to edit, arrow keys to nudge, Backspace to retire, M to pick up.`}
+      aria-label={`Sticky note: ${postIt.text || "Empty"}. Click or press E to edit. Arrow keys nudge, Enter or Backspace retires, M picks up.`}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onOpenEditor();
+        switch (e.key) {
+          case "Enter":
+          case "Backspace":
+          case "Delete":
+            e.preventDefault();
+            e.stopPropagation();
+            onRetireFromKeyboard();
+            return;
+          case "e":
+          case "E":
+            e.preventDefault();
+            e.stopPropagation();
+            onOpenEditor();
+            return;
+          case "m":
+          case "M":
+            e.preventDefault();
+            e.stopPropagation();
+            onPickRequested();
+            return;
+          case "ArrowLeft":
+            e.preventDefault();
+            onNudge(-NUDGE_PX, 0);
+            return;
+          case "ArrowRight":
+            e.preventDefault();
+            onNudge(NUDGE_PX, 0);
+            return;
+          case "ArrowUp":
+            e.preventDefault();
+            onNudge(0, -NUDGE_PX);
+            return;
+          case "ArrowDown":
+            e.preventDefault();
+            onNudge(0, NUDGE_PX);
+            return;
+          case " ":
+            e.preventDefault();
+            return;
         }
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onOpenEditor();
       }}
     >
       <div className="w-full h-full text-foreground/80 font-medium whitespace-pre-wrap overflow-hidden text-ellipsis text-lg leading-snug">
@@ -408,48 +452,9 @@ function StickyWall() {
 
       if (isSearchOpen || isAboutOpen || isDonePileOpen) return;
 
-      if (focusedId) {
-        const note = stateRef.current.wall.find((p) => p.id === focusedId);
-        if (note) {
-          if (e.key === "ArrowLeft") {
-            e.preventDefault();
-            updatePostIt(focusedId, { x: note.x - NUDGE_PX });
-            return;
-          }
-          if (e.key === "ArrowRight") {
-            e.preventDefault();
-            updatePostIt(focusedId, { x: note.x + NUDGE_PX });
-            return;
-          }
-          if (e.key === "ArrowUp") {
-            e.preventDefault();
-            updatePostIt(focusedId, { y: note.y - NUDGE_PX });
-            return;
-          }
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            updatePostIt(focusedId, { y: note.y + NUDGE_PX });
-            return;
-          }
-          if (e.key === "Backspace" || e.key === "Delete" || ((e.metaKey || e.ctrlKey) && e.key === "Enter")) {
-            e.preventDefault();
-            retirePostIt(focusedId);
-            setFocusedId(null);
-            toast("Sent to the done pile", { position: "bottom-center" });
-            return;
-          }
-          if (e.key === "m" || e.key === "M") {
-            e.preventDefault();
-            setPickedId(focusedId);
-            toast("Picked up. Tap anywhere on the wall to place it.", {
-              position: "top-center",
-            });
-            return;
-          }
-        }
-      }
-
       if (e.key === "n" || e.key === "N") {
+        const tag = (e.target as HTMLElement | null)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
         e.preventDefault();
         handleCreateNew();
       }
@@ -461,9 +466,7 @@ function StickyWall() {
     isSearchOpen,
     isAboutOpen,
     isDonePileOpen,
-    focusedId,
     retirePostIt,
-    updatePostIt,
     handleCreateNew,
   ]);
 
@@ -513,6 +516,16 @@ function StickyWall() {
                 toast("Picked up. Tap the wall to place, or the done area to retire.", {
                   position: "top-center",
                 });
+              }}
+              onRetireFromKeyboard={() => {
+                retirePostIt(postIt.id);
+                setFocusedId((cur) => (cur === postIt.id ? null : cur));
+                toast("Sent to the done pile", { position: "bottom-center" });
+              }}
+              onNudge={(dx, dy) => {
+                const fresh = stateRef.current.wall.find((p) => p.id === postIt.id);
+                if (!fresh) return;
+                updatePostIt(postIt.id, { x: fresh.x + dx, y: fresh.y + dy });
               }}
               onFocusNote={() => setFocusedId(postIt.id)}
               onBlurNote={() => setFocusedId((cur) => (cur === postIt.id ? null : cur))}
@@ -585,13 +598,16 @@ function StickyWall() {
 
       {state.done.length > 0 && !isDonePileOpen && (
         <div
-          className="absolute bottom-12 right-12 w-48 h-48 cursor-pointer hover:scale-105 transition-transform"
-          onClick={() => setIsDonePileOpen(true)}
+          className={`absolute bottom-12 right-12 w-48 h-48 cursor-pointer hover:scale-105 transition-transform ${pickedId ? "pointer-events-none" : ""}`}
+          onClick={() => {
+            if (pickedId) return;
+            setIsDonePileOpen(true);
+          }}
           role="button"
           tabIndex={0}
           aria-label="Open the done pile"
           onKeyDown={(e) => {
-            if (e.key === "Enter") setIsDonePileOpen(true);
+            if (e.key === "Enter" && !pickedId) setIsDonePileOpen(true);
           }}
         >
           {state.done.slice(-5).map((postIt, i) => (
@@ -750,9 +766,10 @@ function StickyWall() {
                     or tap its <em>move</em> handle, then tap the wall to place it.
                   </li>
                   <li>
-                    With a note focused, the <strong>arrow keys</strong> nudge it,{" "}
-                    <strong>Backspace</strong> or <strong>Cmd/Ctrl+Enter</strong>{" "}
-                    retires it, and <strong>M</strong> picks it up to move.
+                    With a note Tab-focused, the <strong>arrow keys</strong> nudge
+                    it, <strong>Enter</strong> (or Backspace) retires it,{" "}
+                    <strong>E</strong> opens the editor, and <strong>M</strong>{" "}
+                    picks it up to move.
                   </li>
                   <li>
                     <strong>Retire</strong> a note by dragging it onto the bottom-right
