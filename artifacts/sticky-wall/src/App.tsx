@@ -293,6 +293,36 @@ function DoneZone({
   );
 }
 
+function SketchPlus({ size = 36, color = INK, opacity = 0.35 }: {
+  size?: number;
+  color?: string;
+  opacity?: number;
+}) {
+  // A small hand-drawn-feeling "+" rendered as two SVG strokes that pass
+  // through the same roughen filter as SketchBorder, so it visually
+  // matches the rest of the sketched UI rather than a crisp glyph.
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 36 36"
+      aria-hidden="true"
+      style={{ display: "block", overflow: "visible", opacity }}
+    >
+      <g
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        style={{ filter: `url(#${"sticky-pencil-roughen"})` }}
+      >
+        <line x1="18" y1="6" x2="18" y2="30" />
+        <line x1="6" y1="18" x2="30" y2="18" />
+      </g>
+    </svg>
+  );
+}
+
 function Pad({ onClick }: { onClick: () => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -319,12 +349,17 @@ function Pad({ onClick }: { onClick: () => void }) {
       {...attributes}
       aria-label="New sticky note pad. Click or drag to create a new note. Press N for shortcut."
     >
-      <div className="absolute inset-0 bg-[#E9C9B7] rotate-[-4deg] shadow-sm" />
-      <div className="absolute inset-0 bg-[#D9E2B8] rotate-[-2deg] shadow-sm" />
+      <div className="absolute inset-0 bg-[#E9C9B7] rotate-[-4deg] shadow-sm">
+        <SketchBorder color={INK} strokeWidth={1.2} radius={2} inset={2} staticOnly />
+      </div>
+      <div className="absolute inset-0 bg-[#D9E2B8] rotate-[-2deg] shadow-sm">
+        <SketchBorder color={INK} strokeWidth={1.2} radius={2} inset={2} staticOnly />
+      </div>
       <div className="absolute inset-0 bg-[#E8D9B4] rotate-[2deg] shadow-sm flex items-center justify-center group">
-        <span className="text-foreground/25 text-4xl group-hover:text-foreground/40 transition-colors">
-          +
-        </span>
+        <SketchBorder color={INK} strokeWidth={1.2} radius={2} inset={2} staticOnly />
+        <div className="relative z-10 transition-opacity duration-200 group-hover:opacity-100 opacity-80">
+          <SketchPlus size={36} color={INK} opacity={0.55} />
+        </div>
       </div>
     </div>
   );
@@ -824,12 +859,17 @@ function StickyWall() {
               style={{ backgroundColor: editingPostIt.color }}
               onClick={(e) => e.stopPropagation()}
             >
+              {/* Slightly stronger draw-in than the wall post-its: this is
+                  the focal surface, so the pencil reveal feels deliberate
+                  as the modal opens. Keyed on the post-it id so reopening
+                  a different note re-plays the stroke. */}
               <SketchBorder
                 color={INK}
-                strokeWidth={1.6}
+                strokeWidth={2}
                 radius={2}
                 inset={3}
-                staticOnly
+                durationMs={620}
+                animationKey={`editor-${editingPostIt.id}`}
               />
               <textarea
                 autoFocus
