@@ -19,6 +19,15 @@ pub fn run() {
         // Stage B: notes are persisted to a real file in the
         // app-data dir via @tauri-apps/plugin-fs from the renderer.
         .plugin(tauri_plugin_fs::init())
+        // Stage C: GitHub-Releases-backed auto-updater. The updater
+        // plugin handles download + signature verification (Ed25519
+        // pubkey embedded in tauri.conf.json) and hands the signed
+        // installer off to a Tauri-spawned helper process so the
+        // running `.exe` (which Windows file-locks) can be replaced.
+        // `tauri-plugin-process` exposes the `relaunch()` API the
+        // toast's "Install now" handler calls after install completes.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Ensure the app-data dir (`%APPDATA%\com.siyeonkang.sticktoit\`
         // on Windows) exists before the renderer loads. The renderer's
         // capability set is intentionally locked down to scoped

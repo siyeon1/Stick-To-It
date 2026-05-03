@@ -9,7 +9,8 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --target x86_64-pc-windows-msvc"
+    "tauri:build": "tauri build --target x86_64-pc-windows-msvc",
+    "build:latest-json": "node scripts/build-latest-json.mjs"
   },
   "devDependencies": {
     "@fontsource/manrope": "^5.2.8",
@@ -50,6 +51,8 @@
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/cli": "^2.11.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
+    "@tauri-apps/plugin-process": "^2.3.0",
+    "@tauri-apps/plugin-updater": "^2.9.0",
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "@types/node": "catalog:",
     "@types/react": "catalog:",

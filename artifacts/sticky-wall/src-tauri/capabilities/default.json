@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "window-state:default",
+    "updater:default",
+    "process:allow-restart",
     "path:default",
     "fs:scope-app-data",
     {

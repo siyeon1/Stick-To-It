@@ -14,6 +14,7 @@ import {
 import { Check, Info, LayoutGrid, Search, X } from "lucide-react";
 import { COLORS, randomColor } from "@/colors";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { checkForUpdatesOnLaunch } from "@/updater/check-for-updates";
 
 const queryClient = new QueryClient();
 
@@ -1938,6 +1939,15 @@ function Router() {
 }
 
 function App() {
+  // Launch-time auto-update check (Tauri only). Fires once, ~3s after
+  // mount. No-op in the browser build — the helper short-circuits when
+  // `__TAURI_INTERNALS__` is missing, so React strict-mode's double
+  // invoke is harmless: at most we schedule two timers that each
+  // resolve the same `check()` call against GitHub Releases.
+  useEffect(() => {
+    checkForUpdatesOnLaunch();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
