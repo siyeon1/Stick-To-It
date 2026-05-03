@@ -1,0 +1,34 @@
+Stop — I'm on Windows, not macOS. The plan needs revision before Stage A starts. Don't start coding yet.
+Pinned changes:
+
+First-build target: x86_64-pc-windows-msvc (confirm with me if you think I should pick aarch64 instead — I'm on a standard x64 laptop unless I tell you otherwise). Replace all aarch64-apple-darwin references.
+Bundle target: start with NSIS .exe only (bundle.targets = ["nsis"]). MSI can be added later if I want it. Skip .dmg, skip .app.tar.gz.
+Window/app behavior — Windows conventions, not macOS:
+
+Default close-button behavior (X closes the app). Do not intercept CloseRequested. Do not hide-on-close.
+Drop the ActivationPolicy::Regular line entirely (macOS-only API).
+Drop the "shows in dock not menu bar" requirement (N/A on Windows).
+Drop the custom Edit menu — WebView2 handles Ctrl+C/V/Z/X/A natively. Do not build a Tauri menu just for these.
+Keep the File → Quit menu item only if it's trivial to add; otherwise rely on the X button + Alt+F4.
+
+
+File storage paths: appDataDir() resolves to %APPDATA%\com.siyeonkang.sticktoit\ on Windows. Notes file: %APPDATA%\com.siyeonkang.sticktoit\notes.json. Window state: %APPDATA%\com.siyeonkang.sticktoit\.window-state.json. Update DESKTOP.md accordingly. Atomic write pattern (.tmp + rename) stays — confirm Tauri's fs plugin handles Windows rename-with-existing-target correctly; if not, use removeFile then rename with appropriate ordering and write the safety story explicitly.
+Stage C — Windows auto-updater realities: Drop all macOS Gatekeeper / App Management / ~/Applications fallback content. Replace with the Windows equivalent: SmartScreen. Document in DESKTOP.md that first-run of any unsigned .exe triggers "Windows protected your PC" — user clicks "More info" → "Run anyway." Note that every auto-update re-triggers this because the new binary is unsigned. Acceptable tradeoff for personal use; flag that proper code signing (~$200-400/year Authenticode cert) is the only real fix and is out of scope.
+Stage C verification gate revised: Test the auto-update swap on real Windows. Specifically: confirm the running app can overwrite its own .exe while running (Windows file-locking is stricter than macOS — Tauri's updater handles this via a helper process, but verify it actually works end-to-end on my machine before declaring Stage C done).
+Stage D — Windows build prereqs:
+
+Microsoft C++ Build Tools (via Visual Studio Installer, "Desktop development with C++" workload).
+Rust toolchain with x86_64-pc-windows-msvc target (default on a Windows Rust install).
+WebView2 Runtime — preinstalled on Windows 11. Document but don't bundle.
+Drop Xcode CLT, drop aarch64-apple-darwin.
+
+
+Build command in DESKTOP.md: PowerShell or cmd syntax for env vars, not bash. $env:TAURI_SIGNING_PRIVATE_KEY = ... for PowerShell.
+Release artifact list: .exe (NSIS installer, both first-install and updater download), .exe.sig, latest.json. Three files per release, not four. Update Stage D's release upload checklist.
+
+Confirm:
+
+Are you on x64 or arm64 Windows? Default is x64; tell me if I'm wrong.
+macOS support deferred entirely until I ask. Don't write conditional code "for both platforms" — just write it for Windows. The codebase can grow macOS support later by adding to bundle.targets and platform-specific Rust blocks.
+
+Revise the plan and re-propose. Don't start Stage A until I approve the revised version.
