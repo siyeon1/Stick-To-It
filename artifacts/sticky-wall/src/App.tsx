@@ -1394,10 +1394,10 @@ function StickyWall() {
                 <div className="space-y-6">
                   {groupedDone.map((group) => (
                     <section key={group.key}>
-                      <h3 className="sticky top-0 z-20 -mx-2 px-2 py-2 bg-background/95 backdrop-blur-sm text-foreground/70 text-sm font-semibold tracking-wide uppercase flex items-baseline gap-2">
+                      <h3 className="sticky top-0 z-20 -mx-2 px-2 py-2 bg-background/95 backdrop-blur-sm text-foreground/70 text-sm font-semibold tracking-wide uppercase flex items-baseline gap-1.5">
                         <span>{group.label}</span>
                         <span className="text-foreground/40 tabular-nums font-medium normal-case tracking-normal">
-                          {group.items.length}
+                          ({group.items.length})
                         </span>
                       </h3>
                       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-8 auto-rows-min mt-3">
