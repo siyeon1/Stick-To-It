@@ -3,9 +3,8 @@
 This document describes the Tauri v2 packaging work for Sticky Wall on
 Windows x64.  The browser build at `/` on Replit is unchanged.
 
-Stages A (native shell), B (file-backed storage), and C (auto-updater)
-are implemented.  Stage D (release pipeline / signed installer ergonomics)
-is still pending.
+Stages A (native shell), B (file-backed storage), C (auto-updater),
+and D (Windows NSIS release pipeline) are all implemented.
 
 ## What Stage A delivers
 
@@ -82,9 +81,6 @@ window pointed at it with hot reload.
 | B | Notes persisted to `%APPDATA%\com.siyeonkang.sticktoit\notes.json` instead of localStorage |
 | B | `NoteStorage` interface + `localStorageBackend` / `tauriFsBackend` |
 | B | `hydrated` gate in `usePostItStore` to prevent flash-of-empty-wall |
-| D | Real app icons (the `icons/` folder currently has flat olive-green placeholders generated with ImageMagick — use `pnpm tauri icon <source.png>` to replace) |
-| D | `tauri:release` script + signing env-var ergonomics |
-| D | Documented PowerShell release ritual |
 
 ## Known risks (already on file, not changes for this stage)
 
@@ -184,22 +180,260 @@ pnpm --filter @workspace/sticky-wall run tauri:build
 
 ### Releasing v0.0.2 (the verification ritual)
 
-1. Bump `version` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
-2. Build with the signing env vars set (above).  This produces
-   `Sticky Wall_0.0.2_x64-setup.exe` and `…_x64-setup.exe.sig` under
-   `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`.
-3. Generate the manifest:
+See **Stage D** below for the canonical, scripted release ritual that
+supersedes the by-hand `build:latest-json` invocation. Stage C only
+needs you to know that *if* a `latest.json` is published next to the
+`.exe`, the running app will pick it up on next launch.
+
+## Stage D — Windows NSIS release pipeline (implemented)
+
+Stage D bundles everything Stage C needs into a single
+`pnpm run tauri:release` command, on Siyeon's Windows x64 machine,
+that produces the **three files** uploaded verbatim to a GitHub
+Release:
+
+1. `Sticky Wall_<version>_x64-setup.exe`       — NSIS installer
+2. `Sticky Wall_<version>_x64-setup.exe.sig`   — Tauri updater
+   minisign signature (Ed25519)
+3. `latest.json`                               — updater manifest the
+   running app fetches on next launch
+
+All three live under
+`src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/` after a
+successful build.
+
+### Prerequisites (one-time, on the Windows x64 build machine)
+
+These are the same as Stage A's `tauri:dev` prerequisites, repeated
+here so this section stands on its own:
+
+1. **Microsoft C++ Build Tools** — Visual Studio Installer →
+   "Desktop development with C++" workload (provides `link.exe` and
+   the Windows SDK that `tauri-build` needs).
+2. **Rust toolchain** via <https://rustup.rs>.
+   Confirm `x86_64-pc-windows-msvc` is installed:
    ```powershell
-   pnpm --filter @workspace/sticky-wall run build:latest-json -- `
-     --bundle-dir src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis `
-     --version 0.0.2 `
-     --owner <owner> --repo <repo> `
-     --notes "Bug fixes." `
-     --out latest.json
+   rustup target list --installed
    ```
-4. Create a GitHub release tagged `v0.0.2` and upload both the `.exe`
-   and `latest.json` as release assets.  Mark it as "latest".
-5. Launch the installed v0.0.1, wait for the toast, click **Install
-   now**, and confirm: clean exit → SmartScreen click-through (still
-   expected until Authenticode signing) → passive NSIS install →
-   relaunch into v0.0.2 → notes preserved.
+3. **WebView2 Runtime** — preinstalled on Windows 11. On Windows 10
+   install the Evergreen Bootstrapper from Microsoft. Tauri does not
+   bundle it.
+4. **Node + pnpm** — already required by this monorepo.
+5. **NSIS** is downloaded by Tauri on first build into
+   `%LOCALAPPDATA%\tauri\NSIS\`. No manual install.
+
+### First-time setup
+
+1. **Pick the GitHub repo that will host releases** and replace
+   `TODO-OWNER/TODO-REPO` in **two** places:
+   - `src-tauri/tauri.conf.json` →
+     `plugins.updater.endpoints[0]` (the URL the running app polls).
+   - The `--owner` / `--repo` flags you pass to `pnpm tauri:release`
+     (or rely on the script defaults, which still print
+     `TODO-OWNER/TODO-REPO` until you override them).
+
+2. **Generate the Tauri updater keypair** — once, on Siyeon's machine
+   only, kept outside the repo:
+   ```powershell
+   pnpm --filter @workspace/sticky-wall exec tauri signer generate -w sticky-wall.key
+   ```
+   This emits `sticky-wall.key` (private — **never commit, never
+   email, never paste into chat**) and `sticky-wall.key.pub` (public).
+
+3. **Paste the public key** verbatim — the entire base64 blob,
+   single line — into `src-tauri/tauri.conf.json` at
+   `plugins.updater.pubkey`. Commit that file. Anyone who clones the
+   repo and runs `tauri:release` without the matching private key
+   will be loudly rejected by the script (see "Signing-key gate"
+   below); the public key alone is harmless.
+
+4. **Save the private key safely** — a password manager, or an
+   encrypted USB stick, or both. If it is lost, every existing
+   v0.0.x install will silently stop accepting updates forever
+   (signature mismatch) and you must ship a new pubkey via a
+   manually-installed `.exe`.
+
+### The release ritual
+
+Per release, in **PowerShell** at the repo root, on Siyeon's Windows
+x64 machine:
+
+```powershell
+# 1. Bump BOTH versions to the new release. They MUST match exactly
+#    or `tauri:release` hard-fails before any build runs.
+#    src-tauri/tauri.conf.json                 ->  "version": "0.0.2"
+#    artifacts/sticky-wall/package.json        ->  "version": "0.0.2"
+#    src-tauri/Cargo.toml                      ->  version = "0.0.2"
+#    (Cargo.toml is also checked best-effort; cargo will hard-fail
+#    too if it drifts, just slower.)
+
+# 2. Expose the signing key for this shell session only.
+$env:TAURI_SIGNING_PRIVATE_KEY          = Get-Content -Raw sticky-wall.key
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<password used at generate time>"
+
+# 3. One command does the whole pipeline.
+pnpm --filter @workspace/sticky-wall run tauri:release `
+  --owner siyeonkang --repo sticky-wall `
+  --notes "Bug fixes."
+```
+
+Or, equivalently, from `cmd.exe`:
+
+```cmd
+set TAURI_SIGNING_PRIVATE_KEY=<paste contents of sticky-wall.key>
+set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<password>
+pnpm --filter @workspace/sticky-wall run tauri:release --owner siyeonkang --repo sticky-wall --notes "Bug fixes."
+```
+
+What `tauri:release` does, in order, with a hard-fail on any step:
+
+1. **Signing-key gate** — if `TAURI_SIGNING_PRIVATE_KEY` is unset the
+   script prints a help banner and exits non-zero before touching
+   anything. (Without it, `tauri build` would silently produce a
+   `.exe` with no `.sig` next to it, and every install would reject
+   the next update forever.)
+2. `pnpm build`                                   — Vite production
+   build into `../dist/public`.
+3. `pnpm exec tauri build --target x86_64-pc-windows-msvc`
+   — NSIS installer + `.sig` (because
+   `bundle.createUpdaterArtifacts = true` and
+   `bundle.targets = ["nsis"]` — confirmed in `tauri.conf.json`).
+4. `node scripts/build-latest-json.mjs` over the bundle dir, reading
+   the version from `tauri.conf.json` so it byte-matches the
+   installer filename. Writes `latest.json` next to the `.exe`.
+
+On success, the script prints the three absolute paths to upload.
+
+### Uploading the release
+
+Create a GitHub Release tagged `v<version>` (e.g. `v0.0.2`), mark it
+"latest", and upload exactly these three files as release assets:
+
+1. `Sticky Wall_<version>_x64-setup.exe`
+2. `Sticky Wall_<version>_x64-setup.exe.sig`
+3. `latest.json`
+
+The updater endpoint
+`https://github.com/<owner>/<repo>/releases/latest/download/latest.json`
+resolves to whichever release is currently flagged "latest" — that's
+the only piece of GitHub state the running app cares about.
+
+### Bump-both-versions ritual
+
+Per the Stage D spec, two version strings must stay in lockstep every
+release, and the release script enforces this with a sub-second
+pre-flight check before kicking off the 10-minute Rust compile:
+
+| File | Field | Enforced by `tauri:release`? |
+| --- | --- | --- |
+| `src-tauri/tauri.conf.json`              | `"version"` (top-level)   | yes — hard-fails on mismatch |
+| `artifacts/sticky-wall/package.json`     | `"version"` (top-level)   | yes — hard-fails on mismatch |
+| `src-tauri/Cargo.toml`                   | `[package] version`       | yes — hard-fails on mismatch (best-effort regex) |
+
+If `tauri.conf.json` and `package.json` drift, `tauri:release` exits
+non-zero with both values printed, before touching the disk. If
+`Cargo.toml` drifts, `cargo build` will also hard-fail (slower) — the
+script's regex check is a friendlier pre-flight on top of that.
+
+The NSIS bundle filename and `latest.json` URL are derived from
+`tauri.conf.json`'s value, so a silently-mismatched Cargo.toml would
+otherwise produce a wrong-named binary and a 404 on the updater
+download URL.
+
+### First-install SmartScreen ritual (every install, every update)
+
+The Tauri updater key (Ed25519 minisign) and Microsoft Authenticode
+are **independent** trust chains:
+
+- Tauri's `.sig` proves the bundle came from whoever holds
+  `sticky-wall.key`. The running app verifies it against the
+  `pubkey` in `tauri.conf.json`. This is what keeps auto-updates
+  safe.
+- SmartScreen ("Windows protected your PC", blue dialog) is gated on
+  Microsoft's Authenticode reputation. We do not have an Authenticode
+  cert (~$200–400/year, explicitly out of scope), so SmartScreen
+  fires every time a non-reputable `.exe` is run — both on first
+  install and on every auto-update install — until the cert is
+  bought.
+
+The user-facing ritual on first install:
+
+1. Double-click `Sticky Wall_<version>_x64-setup.exe`.
+2. SmartScreen says *"Windows protected your PC"*. Click
+   **More info**.
+3. Click the now-revealed **Run anyway** button.
+4. NSIS installer runs. App appears in Start menu under "Sticky Wall".
+
+The same dialog appears for **every** auto-update install, because
+the helper-process pattern launches a fresh `.exe` outside the
+already-trusted parent process. This is annoying but expected — do
+not interpret a SmartScreen prompt during update as a sign that
+signing is broken; signing is what the `.sig` file proves and is
+verified independently by the updater plugin before the installer is
+ever launched.
+
+### Canonical 8-step Windows auto-update flow
+
+1. User launches installed Sticky Wall v0.0.1 from Start menu.
+2. ~3 seconds after the renderer mounts,
+   `src/updater/check-for-updates.ts` calls `check()` from
+   `@tauri-apps/plugin-updater`.
+3. Plugin GETs
+   `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`,
+   sees `version: "0.0.2"` > installed `0.0.1`, downloads the `.exe`
+   to a temp dir, and verifies its `.sig` against the embedded
+   `pubkey`. (Sig mismatch = silent reject, no toast.)
+4. Sonner toast appears: *"Sticky Wall 0.0.2 is available — Install
+   now / Later"*.
+5. User clicks **Install now**. Renderer calls
+   `update.downloadAndInstall()` followed by `relaunch()`.
+6. Tauri's helper-process pattern: a tiny detached helper waits for
+   the parent `.exe` to exit, runs the NSIS installer in `passive`
+   mode (silent except for SmartScreen), then re-launches the new
+   `.exe`.
+7. SmartScreen click-through (see above) — every auto-update.
+8. v0.0.2 launches from Start menu's existing shortcut. Notes are
+   intact because they live in
+   `%APPDATA%\com.siyeonkang.sticktoit\notes.json`, which the NSIS
+   installer never touches.
+
+### `%APPDATA%\com.siyeonkang.sticktoit\` file map
+
+| File | Owner | Survives install/uninstall? |
+| --- | --- | --- |
+| `notes.json`           | Stage B file backend | yes — never touched by NSIS |
+| `.window-state.json`   | `tauri-plugin-window-state` | yes — never touched by NSIS |
+
+The NSIS installer's "Remove user data" toggle does not exist in our
+config; uninstalling Sticky Wall leaves both files in place. Manual
+cleanup means deleting the folder by hand.
+
+### Verification gate
+
+Per task #12: on Siyeon's Windows x64 machine, after a clean
+`pnpm install`,
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY          = Get-Content -Raw sticky-wall.key
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<password>"
+pnpm --filter @workspace/sticky-wall run tauri:release
+```
+
+produces `Sticky Wall_<version>_x64-setup.exe`, the matching `.sig`,
+and `latest.json` under `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`.
+Running the installer (clicking through SmartScreen), launching from
+Start menu, creating a note, quitting, and relaunching shows the
+note still there. End-of-stage commit per "Commit hygiene".
+
+### Files added / changed in Stage D
+
+- `artifacts/sticky-wall/src-tauri/icons/{32x32.png,128x128.png,128x128@2x.png,icon.ico,icon.png}`
+  — replaced the olive-green Stage A placeholders with a real Sticky
+  Wall yellow-post-it icon set generated from the 1024×1024
+  `icon.png` source. To regenerate from a new source on Windows:
+  `pnpm --filter @workspace/sticky-wall exec tauri icon src-tauri/icons/icon.png`.
+- `artifacts/sticky-wall/scripts/tauri-release.mjs` — Stage D
+  pipeline runner (signing-key gate → build → tauri build →
+  build-latest-json).
+- `artifacts/sticky-wall/package.json` — added `tauri:release`
+  script.

@@ -1,6 +1,6 @@
 {
   "name": "@workspace/sticky-wall",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --target x86_64-pc-windows-msvc",
+    "tauri:release": "node scripts/tauri-release.mjs",
     "build:latest-json": "node scripts/build-latest-json.mjs"
   },
   "devDependencies": {
