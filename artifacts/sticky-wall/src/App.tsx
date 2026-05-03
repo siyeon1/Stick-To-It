@@ -13,6 +13,7 @@ import {
 } from "framer-motion";
 import { Check, Info, LayoutGrid, Search, X } from "lucide-react";
 import { COLORS, randomColor } from "@/colors";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 const queryClient = new QueryClient();
 
@@ -779,6 +780,169 @@ function DonePileCard({
   );
 }
 
+// Virtualized grid for the Done pile. Only the rows currently visible
+// (plus a small overscan buffer) are mounted, so render cost stays flat
+// as the pile grows past hundreds of notes. The column count adapts to
+// the container width using the same `auto-fill` math as the original
+// CSS grid (minimum 180px columns with a 24px column gap).
+//
+// Accepts a list of `groups`. When a group has a `label`, it is rendered
+// as an inline header row above its items — used by date-bucketed
+// sorting (Today, Yesterday, ...). For the flat (color-sort) layout,
+// a single group with no label is passed so no headers render.
+function VirtualizedDoneGrid({
+  groups,
+  scrollRef,
+  onCardDragEnd,
+  onDraggingChange,
+  onRestore,
+  onDelete,
+}: {
+  groups: { key: string; label?: string; items: PostIt[] }[];
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  onCardDragEnd: (postIt: PostIt, point: Point) => void;
+  onDraggingChange: (dragging: boolean) => void;
+  onRestore: (id: string, x: number, y: number) => void;
+  onDelete: (id: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setWidth(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (cr) setWidth(cr.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const GAP_X = 24; // gap-x-6
+  const GAP_Y = 32; // gap-y-8
+  const MIN_COL = 180;
+  const BUTTON_ROW_H = 28;
+  const BUTTON_MARGIN_TOP = 12; // mt-3
+  const HEADER_H = 44; // h3 + py-2 + mt-3 spacing
+  const SECTION_GAP = 24; // space between groups (space-y-6 visual)
+
+  const cols =
+    width > 0
+      ? Math.max(1, Math.floor((width + GAP_X) / (MIN_COL + GAP_X)))
+      : 1;
+  const colWidth =
+    width > 0 ? (width - GAP_X * (cols - 1)) / cols : MIN_COL;
+  // Card is aspect-square so its height equals the column width.
+  const cardRowHeight = colWidth + BUTTON_MARGIN_TOP + BUTTON_ROW_H + GAP_Y;
+
+  type VRow =
+    | { kind: "header"; key: string; label: string; count: number; size: number }
+    | { kind: "items"; key: string; items: PostIt[]; size: number }
+    | { kind: "gap"; key: string; size: number };
+
+  const rows = useMemo<VRow[]>(() => {
+    const r: VRow[] = [];
+    groups.forEach((g, gi) => {
+      if (g.label !== undefined) {
+        r.push({
+          kind: "header",
+          key: `h:${g.key}`,
+          label: g.label,
+          count: g.items.length,
+          size: HEADER_H,
+        });
+      }
+      for (let i = 0; i < g.items.length; i += cols) {
+        r.push({
+          kind: "items",
+          key: `r:${g.key}:${i}`,
+          items: g.items.slice(i, i + cols),
+          size: cardRowHeight,
+        });
+      }
+      if (gi < groups.length - 1) {
+        r.push({ kind: "gap", key: `gap:${g.key}`, size: SECTION_GAP });
+      }
+    });
+    return r;
+  }, [groups, cols, cardRowHeight]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => rows[i]?.size ?? cardRowHeight,
+    overscan: 4,
+  });
+
+  // Re-measure when row sizing inputs change (resize, group changes).
+  useEffect(() => {
+    rowVirtualizer.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardRowHeight, rows.length]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: rowVirtualizer.getTotalSize(),
+      }}
+    >
+      {rowVirtualizer.getVirtualItems().map((vRow) => {
+        const row = rows[vRow.index];
+        if (!row) return null;
+        const baseStyle: React.CSSProperties = {
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          transform: `translateY(${vRow.start}px)`,
+        };
+        if (row.kind === "gap") {
+          return <div key={vRow.key} style={{ ...baseStyle, height: row.size }} />;
+        }
+        if (row.kind === "header") {
+          return (
+            <div key={vRow.key} style={baseStyle}>
+              <h3 className="-mx-2 px-2 py-2 text-foreground/70 text-sm font-semibold tracking-wide uppercase flex items-baseline gap-1.5">
+                <span>{row.label}</span>
+                <span className="text-foreground/40 tabular-nums font-medium normal-case tracking-normal">
+                  ({row.count})
+                </span>
+              </h3>
+            </div>
+          );
+        }
+        return (
+          <div
+            key={vRow.key}
+            style={{
+              ...baseStyle,
+              display: "grid",
+              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+              columnGap: GAP_X,
+            }}
+          >
+            {row.items.map((postIt) => (
+              <DonePileCard
+                key={postIt.id}
+                postIt={postIt}
+                onDragEnd={onCardDragEnd}
+                onDraggingChange={onDraggingChange}
+                onRestore={onRestore}
+                onDelete={onDelete}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RestoreZone({
   visible,
   isOver,
@@ -974,6 +1138,7 @@ function StickyWall() {
 
   const doneZoneRef = useRef<HTMLDivElement>(null);
   const wallRestoreRef = useRef<HTMLDivElement>(null);
+  const doneScrollRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const padRef = useRef<HTMLDivElement>(null);
 
@@ -1385,7 +1550,10 @@ function StickyWall() {
               nodeRef={wallRestoreRef}
             />
 
-            <div className="flex-1 overflow-y-auto px-8 pb-8 pt-2 relative z-10">
+            <div
+              ref={doneScrollRef}
+              className="flex-1 overflow-y-auto px-8 pb-8 pt-2 relative z-10"
+            >
               {state.done.length === 0 ? (
                 <div className="w-full text-center text-foreground/40 text-xl pt-16">
                   Nothing here yet.
@@ -1394,53 +1562,30 @@ function StickyWall() {
                 <div className="w-full text-center text-foreground/40 text-base pt-16">
                   No notes match "{doneQuery}".
                 </div>
-              ) : doneSort === "color" ? (
-                // Color sort: ungrouped flat grid. Date grouping doesn't
-                // compose with color sort in any way the user would
-                // benefit from — they're choosing color as the primary
-                // axis, so we honor that and skip the headers.
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-8 auto-rows-min">
-                  {displayedDone.map((postIt) => (
-                    <DonePileCard
-                      key={postIt.id}
-                      postIt={postIt}
-                      onDragEnd={handleDoneCardDragEnd}
-                      onDraggingChange={setIsDraggingDoneCard}
-                      onRestore={unretirePostIt}
-                      onDelete={deleteDonePostIt}
-                    />
-                  ))}
-                </div>
               ) : (
-                // Date-bucketed view. Each section has a sticky header
-                // that pins to the top of the scroll container while
-                // its items are in view, so the user always knows which
-                // time bucket they're scanning. Empty buckets are
-                // already pruned in `groupedDone`.
-                <div className="space-y-6">
-                  {groupedDone.map((group) => (
-                    <section key={group.key}>
-                      <h3 className="sticky top-0 z-20 -mx-2 px-2 py-2 bg-background/95 backdrop-blur-sm text-foreground/70 text-sm font-semibold tracking-wide uppercase flex items-baseline gap-1.5">
-                        <span>{group.label}</span>
-                        <span className="text-foreground/40 tabular-nums font-medium normal-case tracking-normal">
-                          ({group.items.length})
-                        </span>
-                      </h3>
-                      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-8 auto-rows-min mt-3">
-                        {group.items.map((postIt) => (
-                          <DonePileCard
-                            key={postIt.id}
-                            postIt={postIt}
-                            onDragEnd={handleDoneCardDragEnd}
-                            onDraggingChange={setIsDraggingDoneCard}
-                            onRestore={unretirePostIt}
-                            onDelete={deleteDonePostIt}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  ))}
-                </div>
+                // Both color-sort (flat) and date-sort (grouped with
+                // inline headers) flow through the same virtualizer so
+                // render cost stays flat past hundreds of notes.
+                // Sticky group headers are sacrificed in the date view
+                // because `position: sticky` does not compose with the
+                // virtualizer's absolute-positioned rows; the headers
+                // remain visible inline above their items.
+                <VirtualizedDoneGrid
+                  groups={
+                    doneSort === "color"
+                      ? [{ key: "all", items: displayedDone }]
+                      : groupedDone.map((g) => ({
+                          key: g.key,
+                          label: g.label,
+                          items: g.items,
+                        }))
+                  }
+                  scrollRef={doneScrollRef}
+                  onCardDragEnd={handleDoneCardDragEnd}
+                  onDraggingChange={setIsDraggingDoneCard}
+                  onRestore={unretirePostIt}
+                  onDelete={deleteDonePostIt}
+                />
               )}
             </div>
           </motion.div>
