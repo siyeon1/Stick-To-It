@@ -133,6 +133,25 @@ export function usePostItStore() {
     [update],
   );
 
+  // Replace every wall post-it's position (and optionally rotation) in a
+  // single batched update. Used by the auto-organize action, which needs
+  // to write all new positions at once so they animate from old → new in
+  // sync rather than as a cascade of N successive renders.
+  const setWallPositions = useCallback(
+    (
+      compute: (
+        p: PostIt,
+        index: number,
+      ) => { x: number; y: number; rotation?: number },
+    ) => {
+      update((prev) => ({
+        ...prev,
+        wall: prev.wall.map((p, i) => ({ ...p, ...compute(p, i) })),
+      }));
+    },
+    [update],
+  );
+
   return {
     state,
     stateRef,
@@ -143,5 +162,6 @@ export function usePostItStore() {
     unretirePostIt,
     deleteDonePostIt,
     clampWall,
+    setWallPositions,
   };
 }

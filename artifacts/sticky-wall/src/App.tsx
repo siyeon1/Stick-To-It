@@ -5,8 +5,13 @@ import { Toaster, toast } from "sonner";
 import NotFound from "@/pages/not-found";
 import { usePostItStore, PostIt } from "@/hooks/use-postit-store";
 import { SketchBorder, SketchDefs } from "@/components/sketch-border";
-import { motion, AnimatePresence, useMotionValue } from "framer-motion";
-import { Info, Search, X } from "lucide-react";
+import {
+  motion,
+  AnimatePresence,
+  useMotionValue,
+  animate,
+} from "framer-motion";
+import { Info, LayoutGrid, Search, X } from "lucide-react";
 
 const queryClient = new QueryClient();
 
@@ -237,10 +242,27 @@ function DraggablePostIt({
   const y = useMotionValue(postIt.y);
   const [isDragging, setIsDragging] = useState(false);
 
+  // When the persisted position changes externally (keyboard nudge,
+  // restore-from-done, auto-organize, on-release clamp pulling the note
+  // back into the rest area, …) tween the motion value to the new target
+  // instead of snapping. The tween is essentially a no-op for ordinary
+  // drag commits — the motion value is already at the dropped position
+  // by the time state updates, so animate(...) settles immediately.
+  //
+  // Gated on !isDragging so a state-driven position change that lands
+  // mid-drag (e.g. a viewport resize firing the clamp effect while the
+  // user is mid-drag) doesn't fight the pointer-driven motion. When the
+  // drag ends, isDragging flips to false and this effect re-runs to
+  // resync to whatever the persisted value now is.
   useEffect(() => {
-    x.set(postIt.x);
-    y.set(postIt.y);
-  }, [postIt.x, postIt.y, x, y]);
+    if (isDragging) return;
+    const ctrlX = animate(x, postIt.x, { duration: 0.4, ease: "easeOut" });
+    const ctrlY = animate(y, postIt.y, { duration: 0.4, ease: "easeOut" });
+    return () => {
+      ctrlX.stop();
+      ctrlY.stop();
+    };
+  }, [postIt.x, postIt.y, x, y, isDragging]);
 
   return (
     <motion.div
@@ -613,9 +635,11 @@ function Pad({
 function DraggableDoneCard({
   postIt,
   onDragEnd,
+  onDraggingChange,
 }: {
   postIt: PostIt;
   onDragEnd: (point: Point) => void;
+  onDraggingChange?: (dragging: boolean) => void;
 }) {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
@@ -627,9 +651,13 @@ function DraggableDoneCard({
       dragMomentum={false}
       dragElastic={0}
       dragSnapToOrigin
-      onDragStart={() => setIsDragging(true)}
+      onDragStart={() => {
+        setIsDragging(true);
+        onDraggingChange?.(true);
+      }}
       onDragEnd={(_, info) => {
         setIsDragging(false);
+        onDraggingChange?.(false);
         onDragEnd({ x: info.point.x, y: info.point.y });
       }}
       whileDrag={{ scale: 1.05, boxShadow: "0 12px 24px rgba(0,0,0,0.18)" }}
@@ -646,9 +674,6 @@ function DraggableDoneCard({
       <SketchBorder color={INK} strokeWidth={1.5} radius={2} inset={2} staticOnly />
       <div className="flex-1 text-foreground/80 font-medium text-xl overflow-hidden text-ellipsis whitespace-pre-wrap pointer-events-none relative z-10">
         {postIt.text}
-      </div>
-      <div className="text-foreground/40 text-xs font-medium pt-2 pointer-events-none relative z-10">
-        Drag onto the wall to bring it back
       </div>
     </motion.div>
   );
@@ -708,6 +733,7 @@ function StickyWall() {
     unretirePostIt,
     deleteDonePostIt,
     clampWall,
+    setWallPositions,
   } = usePostItStore();
   const stateRef = useRef(state);
   useEffect(() => {
@@ -726,6 +752,16 @@ function StickyWall() {
   const [isAnyPostItDragging, setIsAnyPostItDragging] = useState(false);
   const [isOverDoneZone, setIsOverDoneZone] = useState(false);
   const [isOverWallRestore, setIsOverWallRestore] = useState(false);
+  const [isDraggingDoneCard, setIsDraggingDoneCard] = useState(false);
+
+  // If the done modal closes while a card is mid-drag (Escape, X button,
+  // restore-by-button, etc.) the card unmounts and its onDragEnd never
+  // fires, leaving isDraggingDoneCard stuck at true. Reset it whenever
+  // the modal is closed so the dashed RestoreZone doesn't flash on next
+  // open.
+  useEffect(() => {
+    if (!isDonePileOpen) setIsDraggingDoneCard(false);
+  }, [isDonePileOpen]);
 
   const doneZoneRef = useRef<HTMLDivElement>(null);
   const wallRestoreRef = useRef<HTMLDivElement>(null);
@@ -785,6 +821,48 @@ function StickyWall() {
       window.innerHeight / 2 - NOTE_SIZE / 2,
     );
   }, [createAt]);
+
+  // Auto-organize: lay every wall post-it out in a tidy left-to-right,
+  // top-to-bottom grid that fits inside the strict rest area. Cell pitch
+  // is NOTE_SIZE + GRID_GAP at the baseline; if the natural baseline
+  // grid would exceed the rest-area height, we widen the column count
+  // (so we use more horizontal space) and then tighten both pitches to
+  // fit — notes may end up touching or slightly overlapping for very
+  // dense walls, which is preferable to spilling under the pad/done
+  // overlays. Existing rotations are preserved so the wall still feels
+  // like sticky notes (not a spreadsheet) — just tidied.
+  const handleAutoOrganize = useCallback(() => {
+    const N = stateRef.current.wall.length;
+    if (N === 0) return;
+    const GRID_GAP = 16;
+    const cell = NOTE_SIZE + GRID_GAP;
+    const usableW = Math.max(NOTE_SIZE, restArea.right - restArea.left);
+    const usableH = Math.max(NOTE_SIZE, restArea.bottom - restArea.top);
+    const colsBaseline = Math.max(1, Math.floor((usableW + GRID_GAP) / cell));
+    const rowsCap = Math.max(1, Math.floor((usableH + GRID_GAP) / cell));
+    // If the baseline grid would overflow vertically, widen the column
+    // count just enough that ceil(N / cols) <= rowsCap.
+    const cols =
+      Math.ceil(N / colsBaseline) > rowsCap
+        ? Math.min(N, Math.max(colsBaseline, Math.ceil(N / rowsCap)))
+        : colsBaseline;
+    const rows = Math.ceil(N / cols);
+    // Tighten pitch when the grid still doesn't fit, so notes pack into
+    // the visible rest area instead of spilling.
+    const xPitch =
+      cols > 1 ? Math.min(cell, (usableW - NOTE_SIZE) / (cols - 1)) : 0;
+    const yPitch =
+      rows > 1 ? Math.min(cell, (usableH - NOTE_SIZE) / (rows - 1)) : 0;
+    setWallPositions((_p, i) => {
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      return {
+        x: restArea.left + col * xPitch,
+        y: restArea.top + row * yPitch,
+      };
+    });
+    toast("Tidied up the wall", { position: "bottom-center" });
+  }, [restArea, setWallPositions, stateRef]);
 
   const handlePostItDragStart = useCallback(() => {
     setIsAnyPostItDragging(true);
@@ -994,7 +1072,7 @@ function StickyWall() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-md"
+            className="fixed inset-0 z-50 flex flex-col bg-background"
           >
             <div className="p-8 flex justify-between items-center">
               <h2 className="text-3xl font-bold text-foreground">
@@ -1009,27 +1087,36 @@ function StickyWall() {
               </button>
             </div>
 
+            {/* Dashed drop zone is only visually shown while a done card
+                is actively being dragged — otherwise the cards would sit
+                "over" the dashed line, which looks busy. The ref stays
+                attached either way so the hit-test in
+                handleDoneCardDragEnd still works. */}
             <RestoreZone
-              visible={state.done.length > 0}
+              visible={state.done.length > 0 && isDraggingDoneCard}
               isOver={isOverWallRestore}
               nodeRef={wallRestoreRef}
             />
 
-            <div className="flex-1 overflow-x-auto p-8 flex items-center gap-8 snap-x relative z-10">
+            <div className="flex-1 overflow-x-auto px-8 pb-8 pt-4 flex items-center gap-8 snap-x relative z-10">
               {state.done.length === 0 ? (
                 <div className="w-full text-center text-foreground/40 text-xl">
                   Nothing here yet.
                 </div>
               ) : (
                 state.done.map((postIt) => (
-                  <div key={postIt.id} className="relative group">
+                  <div key={postIt.id} className="relative shrink-0">
                     <DraggableDoneCard
                       postIt={postIt}
                       onDragEnd={(point) =>
                         handleDoneCardDragEnd(postIt, point)
                       }
+                      onDraggingChange={setIsDraggingDoneCard}
                     />
-                    <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Buttons sit BELOW the card (not overlapping its
+                        body text) and are always visible — touch devices
+                        have no hover to reveal them. */}
+                    <div className="mt-3 flex justify-center gap-2">
                       <button
                         onClick={() => {
                           unretirePostIt(
@@ -1038,13 +1125,13 @@ function StickyWall() {
                             window.innerHeight / 2 - NOTE_SIZE / 2,
                           );
                         }}
-                        className="bg-secondary text-secondary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-secondary/80 transition-colors"
+                        className="bg-secondary text-secondary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-secondary/80 transition-colors shadow-sm"
                       >
-                        Un-retire
+                        Put back on wall
                       </button>
                       <button
                         onClick={() => deleteDonePostIt(postIt.id)}
-                        className="bg-destructive/10 text-destructive px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-destructive/20 transition-colors"
+                        className="bg-destructive/10 text-destructive px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-destructive/20 transition-colors shadow-sm"
                       >
                         Delete
                       </button>
@@ -1095,6 +1182,16 @@ function StickyWall() {
         ref={toolbarRef}
         className="absolute top-8 right-8 flex gap-3 z-40"
       >
+        {state.wall.length > 1 && (
+          <button
+            onClick={handleAutoOrganize}
+            aria-label="Auto-organize the wall into a tidy grid"
+            title="Tidy up"
+            className="h-11 w-11 bg-white rounded-full flex items-center justify-center text-foreground/60 hover:text-primary hover:bg-secondary transition-colors border border-border"
+          >
+            <LayoutGrid size={18} />
+          </button>
+        )}
         <button
           onClick={() => setIsSearchOpen(!isSearchOpen)}
           aria-label="Search notes"
