@@ -1,0 +1,24 @@
+Going with Tauri. Here's why and the constraints:
+Decision rationale:
+
+Personal-use app, single user (me), occasional self-pushed updates.
+Want a real installer file, not a PWA.
+Care about install size and RAM footprint since I'll have this open all day.
+Tauri's native webview wins on resource cost; ~8MB installer vs Electron's ~80MB matters for a tool I'll iterate on.
+Tauri's GitHub-Releases-based auto-updater fits the "occasional updates" workflow without infrastructure.
+
+Before drafting the task, answer these:
+
+Codebase compat: Is there anything in Sticky Wall today (custom protocols, iframes, native menus, multi-window) that won't translate cleanly to Tauri's WebView? If yes, name it specifically.
+Persistence migration: Currently localStorage. For the Tauri build I want notes stored as a JSON file in the OS's app-data directory (~/Library/Application Support/sticky-wall/notes.json on Mac, equivalent paths on Windows/Linux) using Tauri's fs and path plugins. The browser version should keep using localStorage. What's the cleanest abstraction — a storage.ts module that picks the backend based on window.__TAURI__ presence?
+Auto-updater: I want updates pushed via GitHub Releases. Confirm Tauri v2's updater plugin is what we'll use, the config goes in tauri.conf.json under plugins.updater, and I'll need to generate a signing keypair (tauri signer generate) to sign release binaries. Flag any other infra I'll need.
+
+Out of scope for now:
+
+Code signing for distribution (I'm running it on my own machines; right-click → Open works for unsigned builds on Mac).
+Apple notarization.
+Windows SmartScreen handling.
+Multi-platform CI builds — I'll build for my own OS first and add others later if needed.
+
+Stack pin: Tauri v2 (current stable as of when you check — confirm the version before installing). Do not use v1; v2 has a different plugin model and the updater config differs.
+Answer the three questions, then draft the task as a staged plan: (Stage A) Tauri scaffold + dev mode running, (Stage B) storage abstraction, (Stage C) auto-updater wired to GitHub Releases, (Stage D) build script that produces an installer for my OS. Each stage stops for verification. Do not start coding until I approve the plan.
