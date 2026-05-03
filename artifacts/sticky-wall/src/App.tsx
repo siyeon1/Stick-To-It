@@ -728,6 +728,57 @@ function DraggableDoneCard({
   );
 }
 
+// Wraps DraggableDoneCard with the per-card action buttons (Put back /
+// Delete) that appear below it. Extracted so the same card markup can
+// be rendered from both the flat (color-sort) and grouped (date-sort)
+// branches of the Done modal without duplication.
+function DonePileCard({
+  postIt,
+  onDragEnd,
+  onDraggingChange,
+  onRestore,
+  onDelete,
+}: {
+  postIt: PostIt;
+  onDragEnd: (postIt: PostIt, point: Point) => void;
+  onDraggingChange: (dragging: boolean) => void;
+  onRestore: (id: string, x: number, y: number) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <DraggableDoneCard
+        postIt={postIt}
+        onDragEnd={(point) => onDragEnd(postIt, point)}
+        onDraggingChange={onDraggingChange}
+      />
+      {/* Buttons sit BELOW the card (not overlapping its body text)
+          and are always visible — touch devices have no hover to
+          reveal them. */}
+      <div className="mt-3 flex justify-center gap-2 flex-wrap">
+        <button
+          onClick={() => {
+            onRestore(
+              postIt.id,
+              window.innerWidth / 2 - NOTE_SIZE / 2,
+              window.innerHeight / 2 - NOTE_SIZE / 2,
+            );
+          }}
+          className="bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-[11px] font-semibold hover:bg-secondary/80 transition-colors shadow-sm"
+        >
+          Put back on wall
+        </button>
+        <button
+          onClick={() => onDelete(postIt.id)}
+          className="bg-destructive/10 text-destructive px-3 py-1 rounded-full text-[11px] font-semibold hover:bg-destructive/20 transition-colors shadow-sm"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RestoreZone({
   visible,
   isOver,
@@ -839,6 +890,61 @@ function StickyWall() {
     else arr.sort((a, b) => a.color.localeCompare(b.color));
     return arr;
   }, [state.done, doneQuery, doneSort]);
+
+  // Date-bucketed view of `displayedDone`, used when sort is by date
+  // (newest/oldest). For "color" sort we deliberately fall back to a
+  // flat grid — color grouping and date grouping don't compose
+  // meaningfully.
+  //
+  // Buckets are rolling-relative-to-now: Today is everything since
+  // local midnight, Yesterday is the prior 24h, This Week is the prior
+  // 7 days excluding Today/Yesterday, This Month is the prior 30 days
+  // excluding the above, Older catches the rest. Each note lands in
+  // the FIRST matching bucket only — no double-counting. Empty buckets
+  // are dropped so users don't see "Yesterday (0)" headers.
+  const groupedDone = useMemo<{ key: string; label: string; items: PostIt[] }[]>(() => {
+    if (doneSort === "color") return [];
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    ).getTime();
+    const DAY = 24 * 60 * 60 * 1000;
+    const startOfYesterday = startOfToday - DAY;
+    const startOfWeek = startOfToday - 7 * DAY;
+    const startOfMonth = startOfToday - 30 * DAY;
+    const buckets: Record<string, PostIt[]> = {
+      today: [],
+      yesterday: [],
+      week: [],
+      month: [],
+      older: [],
+    };
+    const keyOf = (p: PostIt) => p.retiredAt ?? p.createdAt ?? 0;
+    for (const p of displayedDone) {
+      const t = keyOf(p);
+      if (t >= startOfToday) buckets.today.push(p);
+      else if (t >= startOfYesterday) buckets.yesterday.push(p);
+      else if (t >= startOfWeek) buckets.week.push(p);
+      else if (t >= startOfMonth) buckets.month.push(p);
+      else buckets.older.push(p);
+    }
+    const order =
+      doneSort === "oldest"
+        ? ["older", "month", "week", "yesterday", "today"]
+        : ["today", "yesterday", "week", "month", "older"];
+    const labels: Record<string, string> = {
+      today: "Today",
+      yesterday: "Yesterday",
+      week: "This Week",
+      month: "This Month",
+      older: "Older",
+    };
+    return order
+      .filter((k) => buckets[k].length > 0)
+      .map((k) => ({ key: k, label: labels[k], items: buckets[k] }));
+  }, [displayedDone, doneSort]);
 
   const doneZoneRef = useRef<HTMLDivElement>(null);
   const wallRestoreRef = useRef<HTMLDivElement>(null);
@@ -1262,41 +1368,51 @@ function StickyWall() {
                 <div className="w-full text-center text-foreground/40 text-base pt-16">
                   No notes match "{doneQuery}".
                 </div>
-              ) : (
+              ) : doneSort === "color" ? (
+                // Color sort: ungrouped flat grid. Date grouping doesn't
+                // compose with color sort in any way the user would
+                // benefit from — they're choosing color as the primary
+                // axis, so we honor that and skip the headers.
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-8 auto-rows-min">
                   {displayedDone.map((postIt) => (
-                    <div key={postIt.id} className="relative">
-                      <DraggableDoneCard
-                        postIt={postIt}
-                        onDragEnd={(point) =>
-                          handleDoneCardDragEnd(postIt, point)
-                        }
-                        onDraggingChange={setIsDraggingDoneCard}
-                      />
-                      {/* Buttons sit BELOW the card (not overlapping its
-                          body text) and are always visible — touch
-                          devices have no hover to reveal them. */}
-                      <div className="mt-3 flex justify-center gap-2 flex-wrap">
-                        <button
-                          onClick={() => {
-                            unretirePostIt(
-                              postIt.id,
-                              window.innerWidth / 2 - NOTE_SIZE / 2,
-                              window.innerHeight / 2 - NOTE_SIZE / 2,
-                            );
-                          }}
-                          className="bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-[11px] font-semibold hover:bg-secondary/80 transition-colors shadow-sm"
-                        >
-                          Put back on wall
-                        </button>
-                        <button
-                          onClick={() => deleteDonePostIt(postIt.id)}
-                          className="bg-destructive/10 text-destructive px-3 py-1 rounded-full text-[11px] font-semibold hover:bg-destructive/20 transition-colors shadow-sm"
-                        >
-                          Delete
-                        </button>
+                    <DonePileCard
+                      key={postIt.id}
+                      postIt={postIt}
+                      onDragEnd={handleDoneCardDragEnd}
+                      onDraggingChange={setIsDraggingDoneCard}
+                      onRestore={unretirePostIt}
+                      onDelete={deleteDonePostIt}
+                    />
+                  ))}
+                </div>
+              ) : (
+                // Date-bucketed view. Each section has a sticky header
+                // that pins to the top of the scroll container while
+                // its items are in view, so the user always knows which
+                // time bucket they're scanning. Empty buckets are
+                // already pruned in `groupedDone`.
+                <div className="space-y-6">
+                  {groupedDone.map((group) => (
+                    <section key={group.key}>
+                      <h3 className="sticky top-0 z-20 -mx-2 px-2 py-2 bg-background/95 backdrop-blur-sm text-foreground/70 text-sm font-semibold tracking-wide uppercase flex items-baseline gap-2">
+                        <span>{group.label}</span>
+                        <span className="text-foreground/40 tabular-nums font-medium normal-case tracking-normal">
+                          {group.items.length}
+                        </span>
+                      </h3>
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-8 auto-rows-min mt-3">
+                        {group.items.map((postIt) => (
+                          <DonePileCard
+                            key={postIt.id}
+                            postIt={postIt}
+                            onDragEnd={handleDoneCardDragEnd}
+                            onDraggingChange={setIsDraggingDoneCard}
+                            onRestore={unretirePostIt}
+                            onDelete={deleteDonePostIt}
+                          />
+                        ))}
                       </div>
-                    </div>
+                    </section>
                   ))}
                 </div>
               )}
