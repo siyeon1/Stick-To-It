@@ -11,13 +11,13 @@ import {
   useMotionValue,
   animate,
 } from "framer-motion";
-import { Info, LayoutGrid, Search, X } from "lucide-react";
+import { Check, Info, LayoutGrid, Search, X } from "lucide-react";
+import { COLORS, randomColor } from "@/colors";
 
 const queryClient = new QueryClient();
 
-// Granola-friendly post-it palette: warm naturals that sit harmoniously
-// next to the olive-green accent without competing with it.
-const COLORS = ["#E8D9B4", "#D9E2B8", "#E9C9B7", "#C8D7CD", "#EBD7C5"];
+// Palette lives in `./colors` so the editor's color picker and the
+// pad's spawn logic share the same source of truth.
 const NOTE_SIZE = 192;
 const PAD_INSET = 32;
 const NUDGE_PX = 16;
@@ -30,7 +30,7 @@ function generatePostIt(x: number, y: number, text = ""): PostIt {
   return {
     id: crypto.randomUUID(),
     text,
-    color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    color: randomColor(),
     rotation: Math.random() * 16 - 8,
     x,
     y,
@@ -845,6 +845,7 @@ function StickyWall() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isDonePileOpen, setIsDonePileOpen] = useState(false);
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [doneQuery, setDoneQuery] = useState("");
   const [doneSort, setDoneSort] = useState<"newest" | "oldest" | "color">(
     "newest",
@@ -872,6 +873,31 @@ function StickyWall() {
   useEffect(() => {
     if (!isDonePileOpen) setDoneQuery("");
   }, [isDonePileOpen]);
+
+  // Color picker should never outlive the editor that anchors it.
+  // Closing the editor (Escape, backdrop click, Retire) should also
+  // dismiss any open picker so it doesn't reappear stale on next open.
+  useEffect(() => {
+    if (!editingPostIt) setIsColorPickerOpen(false);
+  }, [editingPostIt]);
+
+  // Escape key while the color picker is open closes JUST the picker —
+  // not the editor. Without this, Escape would fall through to no-op
+  // (textarea ignores Escape) and the user would have to click outside
+  // the popover to dismiss it. Listener is window-level so it works
+  // even while the textarea is focused.
+  useEffect(() => {
+    if (!isColorPickerOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setIsColorPickerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [isColorPickerOpen]);
 
   // Filtered + sorted view of the done pile. Recomputes only when the
   // pile, the query, or the sort mode change — not on every parent
@@ -1565,6 +1591,91 @@ function StickyWall() {
               />
               <div className="absolute bottom-4 right-6 flex items-center gap-4 text-foreground/50 font-medium text-sm z-10">
                 <span>{editingPostIt.text.length}/200</span>
+                {/* Color picker. Swatch button shows the current color
+                    and opens a popover anchored to its top edge. The
+                    popover and the swatch share a small wrapper with
+                    `relative` so absolute positioning works. The
+                    popover swallows clicks so they don't bubble to the
+                    editor backdrop and close the editor; closing is
+                    handled by Escape, outside-click on the editor
+                    surface itself, or picking a color. */}
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsColorPickerOpen((v) => !v);
+                    }}
+                    aria-label="Change color"
+                    aria-expanded={isColorPickerOpen}
+                    title="Change color"
+                    className="w-7 h-7 rounded-full border border-foreground/20 shadow-sm hover:scale-110 active:scale-95 transition-transform"
+                    style={{ backgroundColor: editingPostIt.color }}
+                  />
+                  <AnimatePresence>
+                    {isColorPickerOpen && (
+                      <>
+                        {/* Invisible outside-click catcher. Escape is
+                            handled globally below via a window
+                            listener so it works while the textarea
+                            has focus too. */}
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsColorPickerOpen(false);
+                          }}
+                        />
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.85, y: 4 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.85, y: 4 }}
+                          transition={{
+                            type: "spring",
+                            damping: 22,
+                            stiffness: 320,
+                          }}
+                          className="absolute bottom-full right-0 mb-2 z-20 bg-white rounded-full shadow-lg border border-border px-2 py-1.5 flex items-center gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {COLORS.map((c) => {
+                            const isActive = c === editingPostIt.color;
+                            return (
+                              <button
+                                key={c}
+                                onClick={() => {
+                                  updatePostIt(editingPostIt.id, {
+                                    color: c,
+                                  });
+                                  setEditingPostIt({
+                                    ...editingPostIt,
+                                    color: c,
+                                  });
+                                  setIsColorPickerOpen(false);
+                                }}
+                                aria-label={`Use color ${c}`}
+                                aria-pressed={isActive}
+                                className={`w-7 h-7 rounded-full border shadow-sm flex items-center justify-center transition-transform hover:scale-110 active:scale-95 ${
+                                  isActive
+                                    ? "border-foreground/70 ring-2 ring-foreground/40 ring-offset-1 ring-offset-white"
+                                    : "border-foreground/20"
+                                }`}
+                                style={{ backgroundColor: c }}
+                              >
+                                {isActive && (
+                                  <Check
+                                    size={14}
+                                    className="text-foreground/80"
+                                    strokeWidth={3}
+                                  />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
                 <button
                   onClick={() => {
                     retirePostIt(editingPostIt.id);
