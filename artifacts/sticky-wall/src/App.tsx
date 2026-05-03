@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
@@ -49,17 +49,24 @@ const SAFE_MARGIN = 8;
 
 type SafeAreas = {
   // Strict rect: where notes are allowed to come to *rest*. Excludes
-  // toolbar, pad, Done-zone, and viewport edges. Used for the on-release
-  // clamp and the resize-clamp pass.
+  // pad, Done-zone, and viewport edges. The TOP is the viewport edge
+  // (minus SAFE_MARGIN) — toolbar avoidance is enforced separately via
+  // `toolbar` and applies only to columns whose horizontal extent
+  // actually overlaps the toolbar's bbox.
   rest: SafeArea;
   // Loose rect: where notes are allowed to *travel* mid-drag. Excludes
-  // toolbar + viewport edges only — the bottom is the viewport edge so a
-  // note can be dragged down into the Done zone (which lives in the
-  // bottom strip) for the retire interaction. The pad also lives in the
-  // bottom strip and is therefore reachable during drag, but the
-  // on-release clamp pulls the note back above the pad if released
-  // there.
+  // viewport edges only — top is the viewport edge so a note can be
+  // dragged up over a column not occupied by the toolbar, and bottom is
+  // the viewport edge so a note can be dragged into the Done zone for
+  // retire. The toolbar is only a *visual* overlap during drag (motion
+  // notes have higher z-index than the toolbar); the on-release clamp
+  // pulls the rest position out from under the toolbar if needed.
   drag: SafeArea;
+  // Toolbar bbox in viewport coords, expanded outward by SAFE_MARGIN.
+  // Null until the toolbar is measured. Used by `clampPointToRestArea`
+  // and `handleAutoOrganize` to keep notes clear of the toolbar only
+  // where they would actually overlap it horizontally.
+  toolbar: SafeArea | null;
 };
 
 function computeSafeAreas(
@@ -69,8 +76,6 @@ function computeSafeAreas(
 ): SafeAreas {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
   const vh = typeof window !== "undefined" ? window.innerHeight : 768;
-  // Top: just below the toolbar (or viewport top if no toolbar measured yet).
-  const top = (toolbar ? toolbar.bottom : 0) + SAFE_MARGIN;
   // Strict rest bottom: above whichever of pad / done-zone reaches higher.
   // Single axis-aligned rectangle, so the horizontal strip between pad and
   // done-zone is also excluded — documented v1 trade-off.
@@ -80,31 +85,43 @@ function computeSafeAreas(
   );
   return {
     rest: {
-      top,
+      top: SAFE_MARGIN,
       left: SAFE_MARGIN,
       right: vw - SAFE_MARGIN,
       bottom: restBottomEdge - SAFE_MARGIN,
     },
     drag: {
-      top,
+      top: SAFE_MARGIN,
       left: SAFE_MARGIN,
       right: vw - SAFE_MARGIN,
       bottom: vh - SAFE_MARGIN,
     },
+    toolbar: toolbar
+      ? {
+          top: toolbar.top - SAFE_MARGIN,
+          left: toolbar.left - SAFE_MARGIN,
+          right: toolbar.right + SAFE_MARGIN,
+          bottom: toolbar.bottom + SAFE_MARGIN,
+        }
+      : null,
   };
 }
 
-function safeAreasEqual(a: SafeAreas, b: SafeAreas): boolean {
+function rectsEqual(a: SafeArea, b: SafeArea): boolean {
   return (
-    a.rest.top === b.rest.top &&
-    a.rest.left === b.rest.left &&
-    a.rest.right === b.rest.right &&
-    a.rest.bottom === b.rest.bottom &&
-    a.drag.top === b.drag.top &&
-    a.drag.left === b.drag.left &&
-    a.drag.right === b.drag.right &&
-    a.drag.bottom === b.drag.bottom
+    a.top === b.top &&
+    a.left === b.left &&
+    a.right === b.right &&
+    a.bottom === b.bottom
   );
+}
+
+function safeAreasEqual(a: SafeAreas, b: SafeAreas): boolean {
+  if (!rectsEqual(a.rest, b.rest)) return false;
+  if (!rectsEqual(a.drag, b.drag)) return false;
+  if (a.toolbar === b.toolbar) return true;
+  if (!a.toolbar || !b.toolbar) return false;
+  return rectsEqual(a.toolbar, b.toolbar);
 }
 
 // Tracks the two rectangles used by the wall: a strict "rest" rect (where
@@ -173,6 +190,38 @@ function clampPointToSafeArea(
   return {
     x: Math.max(minX, Math.min(maxX, x)),
     y: Math.max(minY, Math.min(maxY, y)),
+  };
+}
+
+// Rest-area clamp that's aware of the toolbar exclusion box. The rest
+// rect itself runs all the way to the viewport top; the toolbar is a
+// secondary exclusion that only kicks in for notes whose horizontal
+// extent actually overlaps the toolbar's. This is the per-note overlap
+// rule the plan calls out — easy to break later, hence the explicit
+// helper rather than open-coding it at each call site.
+function clampPointToRestArea(
+  x: number,
+  y: number,
+  restArea: SafeArea,
+  toolbar: SafeArea | null,
+  size = NOTE_SIZE,
+): Point {
+  const base = clampPointToSafeArea(x, y, restArea, size);
+  if (!toolbar) return base;
+  // Does the note's horizontal extent overlap the toolbar's?
+  const noteLeft = base.x;
+  const noteRight = base.x + size;
+  const overlapsX = noteRight > toolbar.left && noteLeft < toolbar.right;
+  if (!overlapsX) return base;
+  // Push down only this column. If pushing down would shove the note
+  // below restArea.bottom (e.g. very short viewport), keep the rest-area
+  // clamp's y rather than producing an inverted result.
+  const minY = Math.max(restArea.top, toolbar.bottom);
+  const maxY = restArea.bottom - size;
+  if (minY > maxY) return base;
+  return {
+    x: base.x,
+    y: Math.max(minY, base.y),
   };
 }
 
@@ -669,10 +718,10 @@ function DraggableDoneCard({
         backgroundColor: postIt.color,
         zIndex: isDragging ? 60 : "auto",
       }}
-      className="shrink-0 snap-center w-72 h-72 shadow-lg p-6 flex flex-col relative cursor-grab active:cursor-grabbing touch-none"
+      className="w-full aspect-square shadow-md p-4 flex flex-col relative cursor-grab active:cursor-grabbing touch-none"
     >
       <SketchBorder color={INK} strokeWidth={1.5} radius={2} inset={2} staticOnly />
-      <div className="flex-1 text-foreground/80 font-medium text-xl overflow-hidden text-ellipsis whitespace-pre-wrap pointer-events-none relative z-10">
+      <div className="flex-1 text-foreground/80 font-medium text-base overflow-hidden text-ellipsis whitespace-pre-wrap pointer-events-none relative z-10">
         {postIt.text}
       </div>
     </motion.div>
@@ -745,6 +794,10 @@ function StickyWall() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isDonePileOpen, setIsDonePileOpen] = useState(false);
+  const [doneQuery, setDoneQuery] = useState("");
+  const [doneSort, setDoneSort] = useState<"newest" | "oldest" | "color">(
+    "newest",
+  );
   const [focusedId, setFocusedId] = useState<string | null>(null);
   // Tracks post-its created within the last ~1.2s so their pencil border
   // animates in. Cleared via timeout once the draw-in finishes.
@@ -763,6 +816,30 @@ function StickyWall() {
     if (!isDonePileOpen) setIsDraggingDoneCard(false);
   }, [isDonePileOpen]);
 
+  // Reset the search box whenever the modal closes — re-opening to a
+  // stale filter is confusing.
+  useEffect(() => {
+    if (!isDonePileOpen) setDoneQuery("");
+  }, [isDonePileOpen]);
+
+  // Filtered + sorted view of the done pile. Recomputes only when the
+  // pile, the query, or the sort mode change — not on every parent
+  // render. Sort key falls back through retiredAt → createdAt → 0 so
+  // legacy items (which loadInitialState backfilled) and any future
+  // schema gaps still produce a stable order.
+  const displayedDone = useMemo(() => {
+    const q = doneQuery.trim().toLowerCase();
+    const filtered = q
+      ? state.done.filter((p) => p.text.toLowerCase().includes(q))
+      : state.done;
+    const keyOf = (p: PostIt) => p.retiredAt ?? p.createdAt ?? 0;
+    const arr = filtered.slice();
+    if (doneSort === "newest") arr.sort((a, b) => keyOf(b) - keyOf(a));
+    else if (doneSort === "oldest") arr.sort((a, b) => keyOf(a) - keyOf(b));
+    else arr.sort((a, b) => a.color.localeCompare(b.color));
+    return arr;
+  }, [state.done, doneQuery, doneSort]);
+
   const doneZoneRef = useRef<HTMLDivElement>(null);
   const wallRestoreRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -775,13 +852,17 @@ function StickyWall() {
   });
   const restArea = safeAreas.rest;
   const dragArea = safeAreas.drag;
+  const toolbarBox = safeAreas.toolbar;
 
   // When the rest area shrinks (window resize, pad/toolbar reflow), pull
   // any wall note that's now outside the new rest rectangle back inside in
   // a single batched update. Notes that were already inside are left alone.
+  // Uses the toolbar-aware clamp so notes whose horizontal column overlaps
+  // the toolbar get pushed below it; notes in non-overlapping columns are
+  // free to sit at the new (higher) top edge.
   useEffect(() => {
-    clampWall((p) => clampPointToSafeArea(p.x, p.y, restArea));
-  }, [restArea, clampWall]);
+    clampWall((p) => clampPointToRestArea(p.x, p.y, restArea, toolbarBox));
+  }, [restArea, toolbarBox, clampWall]);
 
   const markFresh = useCallback((id: string) => {
     setFreshIds((prev) => {
@@ -837,7 +918,17 @@ function StickyWall() {
     const GRID_GAP = 16;
     const cell = NOTE_SIZE + GRID_GAP;
     const usableW = Math.max(NOTE_SIZE, restArea.right - restArea.left);
-    const usableH = Math.max(NOTE_SIZE, restArea.bottom - restArea.top);
+    // Vertical packing must fit in the WORST-case column — i.e. the
+    // toolbar-overlap columns whose top is `toolbar.bottom` rather than
+    // `restArea.top`. Using the global rest height here would let dense
+    // walls spill past `restArea.bottom` for those columns. Cheap to
+    // always compute against the worst-case top: non-overlapping columns
+    // just keep a little extra slack at the bottom.
+    const worstTop =
+      toolbarBox != null
+        ? Math.max(restArea.top, toolbarBox.bottom)
+        : restArea.top;
+    const usableH = Math.max(NOTE_SIZE, restArea.bottom - worstTop);
     const colsBaseline = Math.max(1, Math.floor((usableW + GRID_GAP) / cell));
     const rowsCap = Math.max(1, Math.floor((usableH + GRID_GAP) / cell));
     // If the baseline grid would overflow vertically, widen the column
@@ -856,13 +947,27 @@ function StickyWall() {
     setWallPositions((_p, i) => {
       const row = Math.floor(i / cols);
       const col = i % cols;
+      const cellX = restArea.left + col * xPitch;
+      // Per-column top: if this column's cell overlaps the toolbar's
+      // x-range, the column starts below the toolbar; otherwise it
+      // starts at the (higher) rest-area top. This is the same per-note
+      // overlap rule `clampPointToRestArea` uses, applied at layout time
+      // so auto-organize doesn't tuck the rightmost columns under the
+      // toolbar.
+      const overlapsToolbar =
+        toolbarBox != null &&
+        cellX + NOTE_SIZE > toolbarBox.left &&
+        cellX < toolbarBox.right;
+      const colTop = overlapsToolbar
+        ? Math.max(restArea.top, toolbarBox.bottom)
+        : restArea.top;
       return {
-        x: restArea.left + col * xPitch,
-        y: restArea.top + row * yPitch,
+        x: cellX,
+        y: colTop + row * yPitch,
       };
     });
     toast("Tidied up the wall", { position: "bottom-center" });
-  }, [restArea, setWallPositions, stateRef]);
+  }, [restArea, toolbarBox, setWallPositions, stateRef]);
 
   const handlePostItDragStart = useCallback(() => {
     setIsAnyPostItDragging(true);
@@ -891,14 +996,15 @@ function StickyWall() {
         toast("Sent to the done pile", { position: "bottom-center" });
         return;
       }
-      const clamped = clampPointToSafeArea(
+      const clamped = clampPointToRestArea(
         postIt.x + offset.x,
         postIt.y + offset.y,
         restArea,
+        toolbarBox,
       );
       updatePostIt(postIt.id, clamped);
     },
-    [retirePostIt, updatePostIt, restArea],
+    [retirePostIt, updatePostIt, restArea, toolbarBox],
   );
 
   const handlePadDragEnd = useCallback(
@@ -1074,7 +1180,7 @@ function StickyWall() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex flex-col bg-background"
           >
-            <div className="p-8 flex justify-between items-center">
+            <div className="px-8 pt-8 pb-4 flex justify-between items-center">
               <h2 className="text-3xl font-bold text-foreground">
                 The Done Pile
               </h2>
@@ -1087,6 +1193,55 @@ function StickyWall() {
               </button>
             </div>
 
+            {/* Sort + search toolbar. Sits above the grid; collapses to a
+                no-op surface when the pile is empty (the empty state
+                below renders instead). */}
+            {state.done.length > 0 && (
+              <div className="px-8 pb-4 flex flex-wrap items-center gap-3">
+                <span className="text-foreground/60 text-sm font-medium tabular-nums">
+                  {state.done.length} done
+                  {doneQuery.trim() &&
+                    displayedDone.length !== state.done.length &&
+                    ` · ${displayedDone.length} match${displayedDone.length === 1 ? "" : "es"}`}
+                </span>
+                <div className="flex-1 min-w-[180px] flex items-center gap-2 bg-white border border-border rounded-full px-4 py-2 shadow-sm">
+                  <Search size={16} className="text-foreground/40 shrink-0" />
+                  <input
+                    type="text"
+                    value={doneQuery}
+                    onChange={(e) => setDoneQuery(e.target.value)}
+                    placeholder="Search done notes..."
+                    className="bg-transparent border-none outline-none text-foreground text-sm placeholder:text-muted-foreground w-full font-medium"
+                  />
+                  {doneQuery && (
+                    <button
+                      onClick={() => setDoneQuery("")}
+                      aria-label="Clear search"
+                      className="text-foreground/40 hover:text-foreground transition-colors shrink-0"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <label className="flex items-center gap-2 text-foreground/60 text-sm">
+                  Sort
+                  <select
+                    value={doneSort}
+                    onChange={(e) =>
+                      setDoneSort(
+                        e.target.value as "newest" | "oldest" | "color",
+                      )
+                    }
+                    className="bg-white border border-border rounded-full px-3 py-2 shadow-sm text-foreground text-sm font-medium outline-none cursor-pointer"
+                  >
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="color">By color</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
             {/* Dashed drop zone is only visually shown while a done card
                 is actively being dragged — otherwise the cards would sit
                 "over" the dashed line, which looks busy. The ref stays
@@ -1098,46 +1253,52 @@ function StickyWall() {
               nodeRef={wallRestoreRef}
             />
 
-            <div className="flex-1 overflow-x-auto px-8 pb-8 pt-4 flex items-center gap-8 snap-x relative z-10">
+            <div className="flex-1 overflow-y-auto px-8 pb-8 pt-2 relative z-10">
               {state.done.length === 0 ? (
-                <div className="w-full text-center text-foreground/40 text-xl">
+                <div className="w-full text-center text-foreground/40 text-xl pt-16">
                   Nothing here yet.
                 </div>
+              ) : displayedDone.length === 0 ? (
+                <div className="w-full text-center text-foreground/40 text-base pt-16">
+                  No notes match "{doneQuery}".
+                </div>
               ) : (
-                state.done.map((postIt) => (
-                  <div key={postIt.id} className="relative shrink-0">
-                    <DraggableDoneCard
-                      postIt={postIt}
-                      onDragEnd={(point) =>
-                        handleDoneCardDragEnd(postIt, point)
-                      }
-                      onDraggingChange={setIsDraggingDoneCard}
-                    />
-                    {/* Buttons sit BELOW the card (not overlapping its
-                        body text) and are always visible — touch devices
-                        have no hover to reveal them. */}
-                    <div className="mt-3 flex justify-center gap-2">
-                      <button
-                        onClick={() => {
-                          unretirePostIt(
-                            postIt.id,
-                            window.innerWidth / 2 - NOTE_SIZE / 2,
-                            window.innerHeight / 2 - NOTE_SIZE / 2,
-                          );
-                        }}
-                        className="bg-secondary text-secondary-foreground px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-secondary/80 transition-colors shadow-sm"
-                      >
-                        Put back on wall
-                      </button>
-                      <button
-                        onClick={() => deleteDonePostIt(postIt.id)}
-                        className="bg-destructive/10 text-destructive px-4 py-1.5 rounded-full text-xs font-semibold hover:bg-destructive/20 transition-colors shadow-sm"
-                      >
-                        Delete
-                      </button>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-8 auto-rows-min">
+                  {displayedDone.map((postIt) => (
+                    <div key={postIt.id} className="relative">
+                      <DraggableDoneCard
+                        postIt={postIt}
+                        onDragEnd={(point) =>
+                          handleDoneCardDragEnd(postIt, point)
+                        }
+                        onDraggingChange={setIsDraggingDoneCard}
+                      />
+                      {/* Buttons sit BELOW the card (not overlapping its
+                          body text) and are always visible — touch
+                          devices have no hover to reveal them. */}
+                      <div className="mt-3 flex justify-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => {
+                            unretirePostIt(
+                              postIt.id,
+                              window.innerWidth / 2 - NOTE_SIZE / 2,
+                              window.innerHeight / 2 - NOTE_SIZE / 2,
+                            );
+                          }}
+                          className="bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-[11px] font-semibold hover:bg-secondary/80 transition-colors shadow-sm"
+                        >
+                          Put back on wall
+                        </button>
+                        <button
+                          onClick={() => deleteDonePostIt(postIt.id)}
+                          className="bg-destructive/10 text-destructive px-3 py-1 rounded-full text-[11px] font-semibold hover:bg-destructive/20 transition-colors shadow-sm"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
           </motion.div>

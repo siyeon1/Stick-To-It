@@ -8,6 +8,10 @@ export type PostIt = {
   x: number;
   y: number;
   createdAt: number;
+  // Stamped when the note is retired (moved to the Done pile). Optional
+  // for forward-compat with localStorage data written before this field
+  // existed — `loadInitialState` backfills missing values.
+  retiredAt?: number;
 };
 
 export type WallState = {
@@ -26,7 +30,16 @@ function loadInitialState(): WallState {
   try {
     const item = localStorage.getItem(STORAGE_KEY);
     if (item) {
-      return JSON.parse(item) as WallState;
+      const parsed = JSON.parse(item) as WallState;
+      // Backfill `retiredAt` on legacy done items so sort-by-retired-at
+      // works without a separate migration step. Falls back to
+      // `createdAt`, then to a synthesised "now" so newer/older still
+      // produces a stable order.
+      const now = Date.now();
+      const done = (parsed.done ?? []).map((p) =>
+        p.retiredAt != null ? p : { ...p, retiredAt: p.createdAt ?? now },
+      );
+      return { wall: parsed.wall ?? [], done };
     }
   } catch (e) {
     console.warn("Failed to load state from localStorage", e);
@@ -82,7 +95,16 @@ export function usePostItStore() {
         if (!postIt) return prev;
         return {
           wall: prev.wall.filter((p) => p.id !== id),
-          done: [...prev.done, { ...postIt, rotation: 0, x: 0, y: 0 }],
+          done: [
+            ...prev.done,
+            {
+              ...postIt,
+              rotation: 0,
+              x: 0,
+              y: 0,
+              retiredAt: Date.now(),
+            },
+          ],
         };
       });
     },
