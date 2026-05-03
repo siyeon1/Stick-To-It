@@ -990,6 +990,7 @@ function pointInRect(point: Point, rect: DOMRect | null | undefined): boolean {
 function StickyWall() {
   const {
     state,
+    hydrated,
     addPostIt,
     updatePostIt,
     deleteWallPostIt,
@@ -1400,6 +1401,20 @@ function StickyWall() {
     retirePostIt,
     handleCreateNew,
   ]);
+
+  // Until persisted state is loaded, render only the bare background.
+  // Without this gate, the toolbar / pad / Done-zone / empty-state
+  // illustration would render against an empty `state` for one or more
+  // frames, then snap to the loaded notes — a "flash of empty wall"
+  // that's especially jarring under Tauri where the file read is async.
+  if (!hydrated) {
+    return (
+      <div
+        className="fixed inset-0 w-full h-full bg-background overflow-hidden select-none"
+        aria-hidden="true"
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 w-full h-full bg-background overflow-hidden select-none">

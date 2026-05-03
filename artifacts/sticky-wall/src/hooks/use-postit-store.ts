@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { noteStorage } from "@/storage/storage";
 
 export type PostIt = {
   id: string;
@@ -9,8 +10,8 @@ export type PostIt = {
   y: number;
   createdAt: number;
   // Stamped when the note is retired (moved to the Done pile). Optional
-  // for forward-compat with localStorage data written before this field
-  // existed — `loadInitialState` backfills missing values.
+  // for forward-compat with data written before this field existed —
+  // the storage migration backfills missing values.
   retiredAt?: number;
 };
 
@@ -19,46 +20,63 @@ export type WallState = {
   done: PostIt[];
 };
 
-const STORAGE_KEY = "sticky-wall:v1";
-
 const DEFAULT_STATE: WallState = {
   wall: [],
   done: [],
 };
 
-function loadInitialState(): WallState {
-  try {
-    const item = localStorage.getItem(STORAGE_KEY);
-    if (item) {
-      const parsed = JSON.parse(item) as WallState;
-      // Backfill `retiredAt` on legacy done items so sort-by-retired-at
-      // works without a separate migration step. Falls back to
-      // `createdAt`, then to a synthesised "now" so newer/older still
-      // produces a stable order.
-      const now = Date.now();
-      const done = (parsed.done ?? []).map((p) =>
-        p.retiredAt != null ? p : { ...p, retiredAt: p.createdAt ?? now },
-      );
-      return { wall: parsed.wall ?? [], done };
-    }
-  } catch (e) {
-    console.warn("Failed to load state from localStorage", e);
-  }
-  return DEFAULT_STATE;
-}
+// Debounce window for persistent saves once we are hydrated. Keeps
+// us from hammering disk on every keystroke / drag-frame update.
+const SAVE_DEBOUNCE_MS = 250;
 
 export function usePostItStore() {
-  const [state, setState] = useState<WallState>(loadInitialState);
+  const [state, setState] = useState<WallState>(DEFAULT_STATE);
+  const [hydrated, setHydrated] = useState(false);
 
   const stateRef = useRef(state);
   useEffect(() => {
     stateRef.current = state;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-      console.warn("Failed to save state to localStorage", e);
-    }
   }, [state]);
+
+  // Load persisted state once on mount. Until this resolves, `hydrated`
+  // stays false and the App holds the wall back so we don't render an
+  // empty wall before flashing in the real one.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const loaded = await noteStorage.load();
+      if (cancelled) return;
+      if (loaded) setState(loaded);
+      setHydrated(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Debounced save. Only runs after hydration so the initial empty
+  // state never overwrites the user's persisted notes between mount
+  // and load completion.
+  useEffect(() => {
+    if (!hydrated) return;
+    const handle = setTimeout(() => {
+      void noteStorage.save(state);
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [state, hydrated]);
+
+  // Best-effort flush on unload so a fast quit (X button on Tauri,
+  // tab close in browser) still persists pending edits within the
+  // debounce window. Fire-and-forget; the OS terminates us shortly
+  // after either way.
+  useEffect(() => {
+    if (!hydrated) return;
+    const flush = () => {
+      void noteStorage.save(stateRef.current);
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, [hydrated]);
 
   const update = useCallback((updater: (prev: WallState) => WallState) => {
     setState((prev) => updater(prev));
@@ -177,6 +195,7 @@ export function usePostItStore() {
   return {
     state,
     stateRef,
+    hydrated,
     addPostIt,
     updatePostIt,
     deleteWallPostIt,

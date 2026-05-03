@@ -49,6 +49,7 @@
     "@tanstack/react-query": "catalog:",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/cli": "^2.11.0",
+    "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
