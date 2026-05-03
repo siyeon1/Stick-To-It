@@ -1,0 +1,30 @@
+[package]
+name = "sticky-wall"
+version = "0.0.1"
+description = "Sticky Wall — tactile post-it desktop app"
+authors = ["Siyeon Kang"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# `cargo install tauri-cli --version "^2"` plus `pnpm tauri dev` will
+# pull these crates from crates.io. Versions are intentionally loose
+# (^2) so the first build resolves to the latest 2.x; the resolved
+# values from Cargo.lock are recorded in this stage's commit message
+# per the task's "Commit hygiene" rules.
+
+[lib]
+name = "sticky_wall_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-window-state = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `tauri build` enables this feature automatically for release.
+[features]
+custom-protocol = ["tauri/custom-protocol"]

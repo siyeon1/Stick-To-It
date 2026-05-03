@@ -47,3 +47,8 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Tauri (Sticky Wall desktop)
+artifacts/*/src-tauri/target/
+artifacts/*/src-tauri/gen/
+*.key

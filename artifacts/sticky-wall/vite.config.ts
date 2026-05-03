@@ -4,7 +4,16 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
-const rawPort = process.env.PORT;
+// `TAURI_ENV_PLATFORM` is set automatically by the Tauri CLI for any
+// command that runs Vite under Tauri (`tauri dev`, `tauri build`).
+// The Replit workflow does NOT set it, so the existing fail-fast
+// behavior for missing PORT / BASE_PATH is preserved byte-for-byte
+// when running on Replit. Under Tauri, we default to the values
+// pinned in `src-tauri/tauri.conf.json` (`devUrl: 1420`, served at
+// the root since Tauri loads the bundle as the entire window).
+const isTauri = process.env.TAURI_ENV_PLATFORM !== undefined;
+
+const rawPort = process.env.PORT ?? (isTauri ? "1420" : undefined);
 
 if (!rawPort) {
   throw new Error(
@@ -18,7 +27,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH;
+const basePath = process.env.BASE_PATH ?? (isTauri ? "/" : undefined);
 
 if (!basePath) {
   throw new Error(
