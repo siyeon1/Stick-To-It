@@ -1,0 +1,12 @@
+I attempted Stage A verification on Windows x64 tonight. The build failed at multiple points due to project bugs. I fixed two locally to keep moving but a third blocks me and needs a proper repo fix. All three need to be fixed in main before I retry.
+Bug 1 — Invalid Tauri config: In artifacts/sticky-wall/src-tauri/tauri.conf.json, you set installMode: "passive" under bundle.windows.nsis. This field is not valid there per Tauri v2 schema. The build fails with: "tauri.conf.json" error on bundle > windows > nsis: {"installMode":"passive"} is not valid under any of the schemas listed in the 'anyOf' keyword. The same field under plugins.updater.windows.installMode is correct and should remain. I removed the bundle one locally.
+Bug 2 — Windows-incompatible preinstall script: Root package.json has a preinstall script using sh -c '...' syntax. This crashes on Windows ("'sh' is not recognized"). Replace with npx only-allow pnpm (after adding only-allow as a workspace devDep) or remove the script. I removed it locally.
+Bug 3 — Lockfile missing Windows optional deps (BLOCKING): pnpm-lock.yaml was committed from your Linux container. It does not include Windows-specific optional native binaries that Vite's toolchain requires. After Remove-Item node_modules; Remove-Item pnpm-lock.yaml; pnpm install, the install completes "successfully" but node_modules\@rollup\ doesn't exist at all — pnpm isn't pulling @rollup/rollup-win32-x64-msvc even with no lockfile present. Vite then crashes at startup with Cannot find module '@rollup/rollup-win32-x64-msvc'. The same issue likely affects lightningcss-win32-x64-msvc and other native deps.
+Possible fixes for you to investigate:
+
+Add pnpm.supportedArchitectures to root package.json listing all platforms, then regenerate the lockfile so it includes all platforms' optional binaries
+OR force-add the Windows binaries as direct devDependencies (less elegant but simple)
+OR document a Windows-specific install procedure in DESKTOP.md
+
+Reference: https://pnpm.io/settings#supportedarchitectures handles this exact case.
+Please fix all three on main, commit, and push. I'll pull and retry Stage A verification tomorrow. Do not move on to Stage B/C/D verification — none of that matters until Stage A actually opens a window on Windows.
