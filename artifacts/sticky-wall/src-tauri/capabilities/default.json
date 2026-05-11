@@ -8,8 +8,8 @@
     "window-state:default",
     "updater:default",
     "process:allow-restart",
-    "path:default",
-    "fs:scope-app-data",
+    "core:path:default",
+    "fs:scope-appdata",
     {
       "identifier": "fs:allow-read-text-file",
       "allow": [
